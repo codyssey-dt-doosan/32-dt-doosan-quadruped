@@ -1,0 +1,7 @@
+# 공장 순찰 웨이포인트 (25 × 18 m)
+waypoints:
+  - {name: home, x: -10.0, y: 0.0, yaw: 0.0, dwell_s: 0.0}
+  - {name: gauge_line1, x: 10.0, y: 7.5, yaw: 1.57, dwell_s: 5.0}
+  - {name: gauge_line2, x: -8.0, y: 7.5, yaw: 1.57, dwell_s: 5.0}
+  - {name: gas_tank, x: 8.0, y: -5.0, yaw: -1.57, dwell_s: 8.0}
+  - {name: home, x: -10.0, y: 0.0, yaw: 3.14, dwell_s: 0.0}

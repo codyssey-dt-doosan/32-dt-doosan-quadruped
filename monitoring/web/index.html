@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Doosan Quadruped 관제</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div>
+      <h1>32-dt-doosan-quadruped</h1>
+      <p class="sub">Virtual Plant · Go2 Twin · 순찰 / 점검 / 가스 안전</p>
+    </div>
+    <div class="header-meta">
+      <span id="conn-badge" class="badge off">rosbridge 대기</span>
+      <label>
+        월드
+        <select id="world-select">
+          <option value="corridor">복도 45×3.5×4</option>
+          <option value="factory">공장 25×18×7</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>로봇 트윈</h2>
+      <dl>
+        <dt>위치</dt><dd id="pose">—</dd>
+        <dt>자세</dt><dd id="rpy">—</dd>
+        <dt>속도</dt><dd id="twist">—</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>순찰 (태우)</h2>
+      <dl>
+        <dt>미션</dt><dd id="mission">idle</dd>
+        <dt>목표</dt><dd id="goal">—</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>점검 (운학)</h2>
+      <dl>
+        <dt>게이지</dt><dd id="gauge">—</dd>
+        <dt>열화상 알람</dt><dd id="thermal">정상</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>가스 안전 (채현)</h2>
+      <dl>
+        <dt>농도</dt><dd id="gas">0.0</dd>
+        <dt>복귀</dt><dd id="rth">대기</dd>
+      </dl>
+      <div class="bar"><div id="gas-bar"></div></div>
+    </section>
+
+    <section class="card span-2">
+      <h2>모듈 상태</h2>
+      <ul class="modules">
+        <li>elevation_map <span>도훈</span></li>
+        <li>mpc_controller <span>도훈</span></li>
+        <li>fall_recovery <span>도훈</span></li>
+        <li>gauge_ocr <span>운학</span></li>
+        <li>thermal_fusion <span>운학</span></li>
+        <li>patrol_path <span>태우</span></li>
+        <li>plume_sim <span>채현</span></li>
+        <li>source_seeking <span>채현</span></li>
+        <li>return_to_home <span>채현</span></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>캡처는 REPORT.md · docs/captures 에 첨부</footer>
+  <script src="app.js"></script>
+</body>
+</html>

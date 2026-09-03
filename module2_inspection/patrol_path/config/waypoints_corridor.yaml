@@ -1,0 +1,7 @@
+# 복도 순찰 웨이포인트 (45 × 3.5 m, x along corridor)
+waypoints:
+  - {name: home, x: -20.0, y: 0.0, yaw: 0.0, dwell_s: 0.0}
+  - {name: mid_obstacle, x: 0.0, y: 0.0, yaw: 0.0, dwell_s: 1.0}
+  - {name: gauge_corridor, x: 15.0, y: 0.4, yaw: 1.57, dwell_s: 5.0}
+  - {name: east_end, x: 20.0, y: 0.0, yaw: 3.14, dwell_s: 1.0}
+  - {name: home, x: -20.0, y: 0.0, yaw: 3.14, dwell_s: 0.0}
