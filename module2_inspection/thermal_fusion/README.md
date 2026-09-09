@@ -8,4 +8,4 @@ RGB와 열화상을 정렬·융합해 과열 영역을 표시한다.
 ros2 launch thermal_fusion thermal_fusion.launch.py
 ```
 
-학습·준비 계획: [STUDY_PLAN.md](STUDY_PLAN.md)
+학습·준비 계획: [STUDY_PLAN.md](STUDY_PLAN.md) · 학습 내용 정리: [STUDY.md](STUDY.md)
