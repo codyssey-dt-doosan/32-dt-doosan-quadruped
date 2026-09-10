@@ -4,6 +4,17 @@
     <pose>0 0 0.4 0 0 0</pose>
     <self_collide>false</self_collide>
 
+    <!-- 모듈1: /cmd_vel → 몸체 이동, /odometry·/pose·/joint_state 발행 -->
+    <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+      <topic>/model/go2/cmd_vel</topic>
+    </plugin>
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <odom_publish_frequency>50</odom_publish_frequency>
+    </plugin>
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher"/>
+
     <link name="base_link">
       <inertial>
         <mass>6.0</mass>
@@ -173,51 +184,51 @@
 
     <joint name="FL_hip_joint" type="revolute">
       <parent>base_link</parent><child>FL_hip</child>
-      <axis><xyz>1 0 0</xyz><limit><lower>-1.05</lower><upper>1.05</upper></limit></axis>
+      <axis><xyz>1 0 0</xyz><limit><lower>-1.05</lower><upper>1.05</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="FL_thigh_joint" type="revolute">
       <parent>FL_hip</parent><child>FL_thigh</child>
-      <axis><xyz>0 1 0</xyz><limit><lower>-0.66</lower><upper>2.97</upper></limit></axis>
+      <axis><xyz>0 1 0</xyz><limit><lower>-0.66</lower><upper>2.97</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="FL_calf_joint" type="revolute">
       <parent>FL_thigh</parent><child>FL_calf</child>
-      <axis><xyz>0 1 0</xyz><limit><lower>-2.72</lower><upper>-0.84</upper></limit></axis>
+      <axis><xyz>0 1 0</xyz><limit><lower>-1.57</lower><upper>1.57</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="FR_hip_joint" type="revolute">
       <parent>base_link</parent><child>FR_hip</child>
-      <axis><xyz>1 0 0</xyz><limit><lower>-1.05</lower><upper>1.05</upper></limit></axis>
+      <axis><xyz>1 0 0</xyz><limit><lower>-1.05</lower><upper>1.05</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="FR_thigh_joint" type="revolute">
       <parent>FR_hip</parent><child>FR_thigh</child>
-      <axis><xyz>0 1 0</xyz><limit><lower>-0.66</lower><upper>2.97</upper></limit></axis>
+      <axis><xyz>0 1 0</xyz><limit><lower>-0.66</lower><upper>2.97</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="FR_calf_joint" type="revolute">
       <parent>FR_thigh</parent><child>FR_calf</child>
-      <axis><xyz>0 1 0</xyz><limit><lower>-2.72</lower><upper>-0.84</upper></limit></axis>
+      <axis><xyz>0 1 0</xyz><limit><lower>-1.57</lower><upper>1.57</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="RL_hip_joint" type="revolute">
       <parent>base_link</parent><child>RL_hip</child>
-      <axis><xyz>1 0 0</xyz><limit><lower>-1.05</lower><upper>1.05</upper></limit></axis>
+      <axis><xyz>1 0 0</xyz><limit><lower>-1.05</lower><upper>1.05</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="RL_thigh_joint" type="revolute">
       <parent>RL_hip</parent><child>RL_thigh</child>
-      <axis><xyz>0 1 0</xyz><limit><lower>-0.66</lower><upper>2.97</upper></limit></axis>
+      <axis><xyz>0 1 0</xyz><limit><lower>-0.66</lower><upper>2.97</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="RL_calf_joint" type="revolute">
       <parent>RL_thigh</parent><child>RL_calf</child>
-      <axis><xyz>0 1 0</xyz><limit><lower>-2.72</lower><upper>-0.84</upper></limit></axis>
+      <axis><xyz>0 1 0</xyz><limit><lower>-1.57</lower><upper>1.57</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="RR_hip_joint" type="revolute">
       <parent>base_link</parent><child>RR_hip</child>
-      <axis><xyz>1 0 0</xyz><limit><lower>-1.05</lower><upper>1.05</upper></limit></axis>
+      <axis><xyz>1 0 0</xyz><limit><lower>-1.05</lower><upper>1.05</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="RR_thigh_joint" type="revolute">
       <parent>RR_hip</parent><child>RR_thigh</child>
-      <axis><xyz>0 1 0</xyz><limit><lower>-0.66</lower><upper>2.97</upper></limit></axis>
+      <axis><xyz>0 1 0</xyz><limit><lower>-0.66</lower><upper>2.97</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
     <joint name="RR_calf_joint" type="revolute">
       <parent>RR_thigh</parent><child>RR_calf</child>
-      <axis><xyz>0 1 0</xyz><limit><lower>-2.72</lower><upper>-0.84</upper></limit></axis>
+      <axis><xyz>0 1 0</xyz><limit><lower>-1.57</lower><upper>1.57</upper></limit><dynamics><spring_stiffness>30</spring_stiffness><spring_reference>0</spring_reference><damping>1.0</damping></dynamics></axis>
     </joint>
   </model>
 </sdf>
