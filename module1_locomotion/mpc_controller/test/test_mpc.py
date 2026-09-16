@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 
-from mpc_controller.mpc_controller_node import blocked_cmd, goal_to_cmd, pick_heading, wrap_angle
+from mpc_controller.mpc_controller_node import blocked_cmd, goal_to_cmd, halt_for_fall, pick_heading, wrap_angle
 
 RES = 0.1
 SIZE = 4.0
@@ -122,3 +122,12 @@ if __name__ == "__main__":
     test_blocked_cmd()
     test_pick_heading_corridor_regression()
     print("ok")
+
+
+def test_halt_for_fall():
+    assert halt_for_fall("fallen") is True
+    assert halt_for_fall("recovering") is True
+    assert halt_for_fall("failed") is True
+    assert halt_for_fall("idle") is False
+    assert halt_for_fall("recovered") is False
+    assert halt_for_fall(None) is False  # fall_recovery 없이 단독 실행

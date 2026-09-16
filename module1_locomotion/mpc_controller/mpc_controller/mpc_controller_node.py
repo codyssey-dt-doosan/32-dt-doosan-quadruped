@@ -7,7 +7,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, String
 
 
 def wrap_angle(a: float) -> float:
@@ -75,6 +75,14 @@ def blocked_cmd(goal_rel: float, w_max: float) -> tuple[float, float]:
     return (0.0, w)
 
 
+HALT_STATES = frozenset({"fallen", "recovering", "failed"})
+
+
+def halt_for_fall(status: str | None) -> bool:
+    """fall_recovery 상태가 전도·회복 중이면 True. None(미수신)은 주행."""
+    return status in HALT_STATES
+
+
 class MpcControllerNode(Node):
     def __init__(self) -> None:
         super().__init__("mpc_controller")
@@ -102,10 +110,12 @@ class MpcControllerNode(Node):
         self.grid_time = None
         self._blocked = False
         self._grid_warned = False
+        self.fall_status: str | None = None
 
         self.create_subscription(PoseStamped, goal_topic, self.goal_cb, 10)
         self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
         self.create_subscription(Float32MultiArray, "/elevation_map", self.elevation_map_cb, 10)
+        self.create_subscription(String, "/fall_recovery/status", self.fall_status_cb, 10)
         self.pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.create_timer(0.1, self._tick)
         self.get_logger().info("mpc_controller started (도훈)")
@@ -117,6 +127,13 @@ class MpcControllerNode(Node):
     def odom_cb(self, msg: Odometry) -> None:
         self.odom_msg = msg
         self.odom_time = self.get_clock().now()
+
+    def fall_status_cb(self, msg: String) -> None:
+        if halt_for_fall(msg.data) != halt_for_fall(self.fall_status):
+            self.get_logger().info(
+                f"fall_recovery {msg.data}: " + ("정지" if halt_for_fall(msg.data) else "주행 재개")
+            )
+        self.fall_status = msg.data
 
     def elevation_map_cb(self, msg: Float32MultiArray) -> None:
         try:
@@ -136,6 +153,9 @@ class MpcControllerNode(Node):
         return (self.get_clock().now() - t).nanoseconds / 1e9 > timeout
 
     def _tick(self) -> None:
+        if halt_for_fall(self.fall_status):
+            self.pub.publish(Twist())
+            return
         timeout = self.get_parameter("timeout").value
         if (
             self._stale(self.goal_time, timeout)
