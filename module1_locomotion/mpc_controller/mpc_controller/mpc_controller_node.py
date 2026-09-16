@@ -44,17 +44,11 @@ def pick_heading(
     occ = ~np.isnan(grid) & (grid > obstacle_h)
     cx_occ, cy_occ = cx[occ], cy[occ]
 
-    offsets = [0.0]
-    k = 1
-    while k * scan_step <= scan_max + 1e-9:
-        offsets.append(k * scan_step)
-        offsets.append(-k * scan_step)
-        k += 1
+    k_max = int(scan_max / scan_step) if scan_step > 0 else 0
+    offsets = [0.0] + [s * k * scan_step for k in range(1, k_max + 1) for s in (1.0, -1.0)]
 
     for off in offsets:
         h = wrap_angle(goal_rel + off)
-        if cx_occ.size == 0:
-            return h
         along = cx_occ * math.cos(h) + cy_occ * math.sin(h)
         lateral = -cx_occ * math.sin(h) + cy_occ * math.cos(h)
         blocked = np.any((along >= 0) & (along <= lookahead) & (np.abs(lateral) <= half_width))
@@ -73,6 +67,12 @@ def goal_to_cmd(
     w = max(-w_max, min(w_max, k_ang * heading))
     v = v_max * max(0.0, math.cos(heading))
     return (v, w)
+
+
+def blocked_cmd(goal_rel: float, w_max: float) -> tuple[float, float]:
+    """헤딩 스캔이 전부 막혔을 때 제자리 선회 명령. goal_rel 부호 방향으로 w_max 선회(0이면 +)."""
+    w = math.copysign(w_max, goal_rel if goal_rel != 0.0 else 1.0)
+    return (0.0, w)
 
 
 class MpcControllerNode(Node):
@@ -101,6 +101,7 @@ class MpcControllerNode(Node):
         self.grid: np.ndarray | None = None
         self.grid_time = None
         self._blocked = False
+        self._grid_warned = False
 
         self.create_subscription(PoseStamped, goal_topic, self.goal_cb, 10)
         self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
@@ -118,8 +119,15 @@ class MpcControllerNode(Node):
         self.odom_time = self.get_clock().now()
 
     def elevation_map_cb(self, msg: Float32MultiArray) -> None:
-        rows, cols = msg.layout.dim[0].size, msg.layout.dim[1].size
-        self.grid = np.array(msg.data, dtype=np.float32).reshape(rows, cols)
+        try:
+            rows, cols = msg.layout.dim[0].size, msg.layout.dim[1].size
+            grid = np.array(msg.data, dtype=np.float32).reshape(rows, cols)
+        except Exception as e:
+            if not self._grid_warned:
+                self._grid_warned = True
+                self.get_logger().warn(f"elevation_map 메시지 형식 오류, 무시: {e}")
+            return  # grid/grid_time 갱신 안 함 → 기존 timeout 경로가 정지시킴
+        self.grid = grid
         self.grid_time = self.get_clock().now()
 
     def _stale(self, t, timeout: float) -> bool:
@@ -172,8 +180,7 @@ class MpcControllerNode(Node):
                 self.get_logger().info("경로 재탐색: 헤딩 스캔 재개")
 
         if h is None:
-            v, w = goal_to_cmd(dist, goal_rel, v_max, w_max, k_ang, stop_dist)
-            v = 0.0  # 막히면 제자리에서 goal 쪽으로 회전
+            v, w = blocked_cmd(goal_rel, w_max)  # 막히면 제자리에서 goal 쪽으로 선회
         else:
             v, w = goal_to_cmd(dist, h, v_max, w_max, k_ang, stop_dist)
 

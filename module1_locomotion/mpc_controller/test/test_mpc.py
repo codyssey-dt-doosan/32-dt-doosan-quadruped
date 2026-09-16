@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 
-from mpc_controller.mpc_controller_node import goal_to_cmd, pick_heading, wrap_angle
+from mpc_controller.mpc_controller_node import blocked_cmd, goal_to_cmd, pick_heading, wrap_angle
 
 RES = 0.1
 SIZE = 4.0
@@ -77,6 +77,40 @@ def test_wrap_angle():
     assert wrap_angle(0.5) == 0.5
 
 
+def test_pick_heading_scan_step_zero_no_hang():
+    # scan_step<=0이면 후보를 goal_rel 하나로만 좁혀야 한다(무한루프 금지)
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    kwargs = dict(COMMON, scan_step=0.0)
+    assert pick_heading(grid, 0.3, **kwargs) == 0.3
+
+
+def test_blocked_cmd():
+    # 막힘 시 제자리 선회: goal_rel 부호 방향으로 w_max, goal_rel==0이면 양의 방향
+    assert blocked_cmd(0.0, 1.0) == (0.0, 1.0)
+    assert blocked_cmd(-0.2, 1.0) == (0.0, -1.0)
+
+
+def test_pick_heading_corridor_regression():
+    # 전방 1.3m, 우측(y<0)에 걸친 장애물 → 왼쪽(+)으로 10도 회피
+    cx, cy = _cell_centers()
+    grid_right = np.full((N, N), np.nan, dtype=np.float32)
+    grid_right[(cx >= 1.2) & (cx <= 1.4) & (cy >= -0.7) & (cy <= -0.3)] = 0.65
+    h_right = pick_heading(grid_right, 0.0, **COMMON)
+    assert h_right is not None
+    assert h_right > 0.0
+    assert math.isclose(h_right, math.radians(10.0))
+
+    # 전방 1.3m, 좌측(y>0)에 걸치되 half_width(0.35) 밖 → 직진 그대로 통과
+    grid_left = np.full((N, N), np.nan, dtype=np.float32)
+    grid_left[(cx >= 1.2) & (cx <= 1.4) & (cy >= 0.4) & (cy <= 0.8)] = 0.65
+    h_left = pick_heading(grid_left, 0.0, **COMMON)
+    assert h_left == 0.0
+
+
+# elevation_map_cb의 형식 오류 가드(dim 길이 부족/shape 불일치)는 rclpy.init/Node 생성이 필요해
+# 이 순수 함수 테스트 파일에서는 생략한다. task-1-report.md Final fix wave 섹션에 명시.
+
+
 if __name__ == "__main__":
     test_pick_heading_all_nan_returns_goal()
     test_pick_heading_all_ground_returns_goal()
@@ -84,4 +118,7 @@ if __name__ == "__main__":
     test_pick_heading_fully_blocked_returns_none()
     test_goal_to_cmd()
     test_wrap_angle()
+    test_pick_heading_scan_step_zero_no_hang()
+    test_blocked_cmd()
+    test_pick_heading_corridor_regression()
     print("ok")
