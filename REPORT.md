@@ -17,7 +17,7 @@
 
 - **Elevation map**: LiDAR/깊이 포인트로 지형 그리드를 갱신하고 발 착지 후보를 만든다.
 - **Heading scan**: elevation map 전방 1.5 m 부채꼴을 goal 방향 ±60° 후보로 검사해 안전한 헤딩으로 `/cmd_vel`을 낸다. CoM/접지력 MPC는 향후 과제.
-- **Fall recovery**: 전도 자세를 감지한 뒤 일어서기 시퀀스로 보행 가능 자세를 복구한다.
+- **Fall recovery**: IMU roll/pitch가 60°를 0.3 s 넘으면 `fallen`, 1.5 s 후 Gazebo `set_pose`로 제자리 기립(x·y·yaw 유지) → 자세 20° 이내 0.5 s 유지 시 `recovered`. 최대 3회 재시도. 회복 중엔 mpc_controller가 `/cmd_vel` 0.
 
 ### 2.2 모듈 2 — 점검 (`module2_inspection`, 운학 · 태우)
 
@@ -40,7 +40,7 @@
 | 복도 순찰 | 경로 완주율 | 100% | 1/1 완주, 시뮬 162 s |
 | 공장 점검 | 게이지 판독 오차 | TBD | — |
 | 가스 탐색 | 누출원 도달 시간 | TBD | — |
-| 전도 회복 | 회복 성공률 | TBD | — |
+| 전도 회복 | 회복 성공률 | 5/5 (corridor, roll 100° 강제 전도, 평균 회복 2.8 s) | — |
 
 ## 4. 관제 캡처
 
