@@ -7,6 +7,8 @@ from fall_recovery.fall_recovery_node import (
     RECOVERED,
     RECOVERING,
     FallStateMachine,
+    set_pose_cmd,
+    set_pose_req,
     tilt_deg,
 )
 
@@ -124,3 +126,20 @@ def test_upright_must_hold_continuously():
     assert sm.state == RECOVERING
     sm.update(2.9, 3.0)
     assert sm.state == RECOVERED
+
+
+def test_set_pose_req_keeps_xy_yaw_and_levels_body():
+    req = set_pose_req(1.5, -2.0, math.pi / 2, 0.4)
+    assert 'name: "go2"' in req
+    assert "x: 1.5" in req and "y: -2.0" in req and "z: 0.4" in req
+    # yaw 90° → qz = sin(45°), qw = cos(45°), qx = qy = 0
+    assert "orientation: {x: 0.0, y: 0.0, z: 0.7071" in req
+    assert "w: 0.7071" in req
+
+
+def test_set_pose_cmd_targets_world_service():
+    cmd = set_pose_cmd("factory", 'name: "go2"')
+    assert cmd[:3] == ["gz", "service", "-s"]
+    assert "/world/factory/set_pose" in cmd
+    assert "gz.msgs.Pose" in cmd and "gz.msgs.Boolean" in cmd
+    assert cmd[-1] == 'name: "go2"'

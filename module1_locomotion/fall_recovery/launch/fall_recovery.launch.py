@@ -13,7 +13,18 @@ def generate_launch_description() -> LaunchDescription:
                 executable="fall_recovery_node",
                 name="fall_recovery",
                 output="screen",
-                parameters=[{"world": LaunchConfiguration("world"), "use_sim_time": True}],
+                parameters=[
+                    {
+                        "world": LaunchConfiguration("world"),
+                        "use_sim_time": True,
+                        "fall_deg": 60.0,
+                        "upright_deg": 20.0,
+                        "debounce": 0.3,
+                        "recover_delay": 1.5,
+                        "max_retries": 3,
+                        "stand_z": 0.4,
+                    }
+                ],
             ),
         ]
     )
