@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Project Definition Canvas — 32-dt-doosan-quadruped</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700;800&display=swap');
+@page { size: A3 landscape; margin: 6mm; }
+:root{--navy:#0b1f3a;--blue:#2563eb;--sky:#e8f1ff;--mint:#e5f7f1;--green:#08765d;--amber:#fff4d8;--ink:#172033;--muted:#657084;--line:#cdd7e4;--panel:#f4f7fa}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:white;color:var(--ink);font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif}
+.page{width:100%;background:white}
+.head{padding:14px 24px 12px;background:var(--navy);color:white}
+.head small{color:#8fc4ff;font-weight:800;letter-spacing:.1em;font-size:10px}
+.head h1{font-size:24px;margin:4px 0 2px}
+.head p{margin:0;color:#d5e2f3;font-size:12px}
+.body{padding:12px 22px 10px}
+.meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px}
+.field{border:1px solid var(--line);padding:6px 10px}
+.field label{display:block;font-size:10px;font-weight:800;color:var(--muted)}
+.field div{font-size:14px;padding:2px 0 0}
+.hint{font-size:11px;color:var(--muted);margin:0 0 8px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.card{background:var(--panel);padding:9px 10px;border-top:4px solid #9aa8ba}
+.card.blue{background:var(--sky);border-color:var(--blue)}
+.card.green{background:var(--mint);border-color:var(--green)}
+.card.amber{background:var(--amber);border-color:#e49a13}
+.card.wide{grid-column:span 2}
+.num{font-size:10px;font-weight:800;color:var(--blue)}
+.card h2{font-size:14px;margin:2px 0 1px}
+.prompt{font-size:10px;color:var(--muted);margin-bottom:4px}
+.filled{background:#ffffffc7;border:1px dashed #91a2b7;padding:6px 8px;font-size:11px;line-height:1.4;white-space:pre-wrap}
+.flow{margin-top:8px;background:var(--navy);padding:12px 14px;color:white}
+.flow h2{font-size:14px;margin:0 0 8px}
+.pipeline{display:grid;grid-template-columns:1fr 24px 1fr 24px 1fr 24px 1fr;gap:6px;align-items:stretch}
+.node label{display:block;color:#93c5fd;font-size:10px;font-weight:800;text-align:center;margin-bottom:4px}
+.node .filled{background:#17365e;color:white;border:1px dashed #75a0d4;text-align:center;font-size:11px}
+.arr{display:flex;align-items:center;justify-content:center;color:#77aef4;font-size:22px}
+.review{margin-top:8px;padding:8px 12px;border:1px solid var(--line)}
+.review h2{margin:0 0 6px;font-size:13px}
+.checks{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.checks div{background:#f5f7fa;padding:6px 8px;font-size:11px}
+.footer{padding:6px 22px 8px;border-top:1px solid var(--line);font-size:10px;color:var(--muted)}
+.head,.card,.flow,.filled,.node .filled{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+</style>
+</head>
+<body>
+<main class="page">
+<header class="head">
+  <small>CODESEY · DESIGN REVIEW</small>
+  <h1>학생용 Project Definition Canvas</h1>
+  <p>AI 프로젝트의 사용자–문제–입력–AI Task–출력–KPI를 하나의 흐름으로 설계한다.</p>
+</header>
+<section class="body">
+  <div class="meta">
+    <div class="field"><label>팀명</label><div>32-dt-doosan-quadruped</div></div>
+    <div class="field"><label>과제명</label><div>사족보행 로봇 디지털 트윈 — 플랜트 순찰·점검·가스 안전</div></div>
+    <div class="field"><label>작성자·작성일</label><div>도훈 · 운학 · 태우 · 채현 · 수현 / 2026-09-07</div></div>
+  </div>
+  <p class="hint">각 항목에는 기술명만 나열하지 말고, 사용자·데이터·판단·행동·성과가 어떻게 연결되는지 구체적으로 작성한다.</p>
+  <div class="grid">
+    <article class="card">
+      <div class="num">01 · USER</div><h2>사용자와 상황</h2>
+      <div class="prompt">누가, 언제, 어떤 환경에서 사용하는가?</div>
+      <div class="filled">주사용자: 플랜트 안전·설비 점검 관제 요원(수현 대시보드). 보조: 임무 설계·검증 팀(도훈 보행, 운학 게이지/열화상, 태우 순찰, 채현 가스).
+사용 시점: 교대 순찰, 게이지 정기 점검, 가스 누출 의심, 실기 투입 전 시나리오 리허설.
+환경: Gazebo 가상 플랜트 — 복도 45×3.5×4 m, 공장 25×18×7 m — 위 Go2 트윈이 임무를 수행하고, 관제는 웹에서 상태를 본다.</div>
+    </article>
+    <article class="card">
+      <div class="num">02 · PROBLEM</div><h2>핵심 문제</h2>
+      <div class="prompt">현재 어떤 불편·손실·위험이 발생하는가?</div>
+      <div class="filled">사람이 좁은 복도·고온·가스 위험 구역을 직접 돌면 점검 누락·지연과 유해 노출이 생긴다. 게이지 눈금 오독, 과열 미탐지, 누출원을 늦게 찾으면 설비 정지와 사고 비용이 커진다. 전도·누출 같은 극단 상황은 실기에서 반복 검증하기 어려워, 실투입 전에 디지털 트윈으로 순찰·점검·대피(복귀)를 확인할 수단이 없다.</div>
+    </article>
+    <article class="card blue">
+      <div class="num">03 · INPUT</div><h2>입력 데이터</h2>
+      <div class="prompt">데이터의 출처·단위·주기·자료형은 무엇인가?</div>
+      <div class="filled">출처: Gazebo Harmonic Go2 트윈 + 플랜트 SDF (ros_gz_bridge).
+센서: LiDAR PointCloud2 /points 10 Hz, IMU /imu 200 Hz, RGB Image 640×480 15 Hz, 열화상 L8 320×240 10 Hz, Odometry /odom, 가스 농도 Float32 /gas/concentration.
+임무: 순찰 웨이포인트 YAML(복도/공장), 게이지·탱크·장애물 모델 포즈.</div>
+    </article>
+    <article class="card blue">
+      <div class="num">04 · AI TASK</div><h2>AI 과업</h2>
+      <div class="prompt">분류·예측·추천·최적화·생성 중 무엇인가?</div>
+      <div class="filled">① 최적화: elevation map + MPC로 착지·CoM 궤적·cmd_vel 생성.
+② 분류: IMU 기반 전도 감지 → 회복 시퀀스.
+③ 인식: 게이지 OCR(지침/숫자), RGB–열화상 융합 과열 검출.
+④ 경로: 웨이포인트 순찰·점검 정차.
+⑤ 탐색: 플룸 농도 구배 소스 시킹, 종료 시 복귀.
+순서: 보행 가능 → 순찰 정차 → OCR/열화상 → 농도 이상 시 시킹 → RTH.</div>
+    </article>
+    <article class="card">
+      <div class="num">05 · OUTPUT</div><h2>출력과 사용 방식</h2>
+      <div class="prompt">AI가 무엇을 출력하며 누가 어떻게 사용하는가?</div>
+      <div class="filled">장치: /cmd_vel·관절 명령으로 Go2 트윈 이동·정차.
+판단값: /inspection/gauge(압력 Float32), /inspection/thermal_alert(Bool), /patrol/goal, /source_seeking/goal, /mission/status, /gas/concentration.
+사용: 관제 웹(monitoring/web)에서 위치·미션·게이지·농도 막대를 보고, 운용자가 순찰 계속 / 중단 / 홈 복귀를 결정한다.</div>
+    </article>
+    <article class="card">
+      <div class="num">06 · BASELINE</div><h2>비교 기준</h2>
+      <div class="prompt">기존 방식·단순 규칙·기본 모델은 무엇인가?</div>
+      <div class="filled">① 현장 도보 순찰 + 육안 게이지/열 확인(사람 노출).
+② 단순 규칙: 고정 웨이포인트 추종, 농도 임계값만으로 알람(위치 추정 없음), OCR 없이 더미 0 출력.
+③ 기본 제어: 균일 속도 cmd_vel, 전도 시 정지.
+동일 월드(복도/공장)에서 완주율·판독 오차·누출원 도달 시간·전도 회복 성공률을 같은 로그로 비교한다.</div>
+    </article>
+    <article class="card green">
+      <div class="num">07 · MODEL KPI</div><h2>모델 성능지표</h2>
+      <div class="prompt">AI 판단의 품질을 어떤 지표로 측정하는가?</div>
+      <div class="filled">게이지 OCR: 압력 MAE, 판독 성공률.
+열화상 과열: Recall, F1.
+보행 MPC: 경로 추종 RMSE(m), 전도 발생 횟수.
+전도 회복: 회복 성공률(%).
+소스 시킹: 누출원 위치 오차(m), 도달 시간(s).
+순찰: 웨이포인트 도달 오차 &lt; 0.4 m 비율.</div>
+    </article>
+    <article class="card green">
+      <div class="num">08 · SERVICE KPI</div><h2>서비스 성과지표</h2>
+      <div class="prompt">실제 사용자의 결과가 얼마나 개선되는가?</div>
+      <div class="filled">순찰 1회 소요 시간(사람 도보 대비).
+위험 구역 사람 출입 횟수 감소.
+게이지 점검 누락률·오독률.
+누출 인지부터 위치 특정까지 시간.
+관제 알람 인지 후 대응 시작 시간.
+실기 투입 전 시나리오를 시뮬에서 반복 검증할 수 있는 횟수.</div>
+    </article>
+    <article class="card amber wide">
+      <div class="num">09 · CONSTRAINTS</div><h2>제약조건과 위험</h2>
+      <div class="prompt">시간·비용·안전·개인정보·장치·운영 규칙 중 고려할 것은?</div>
+      <div class="filled">스택: Ubuntu 24.04 + ROS 2 Jazzy + Gazebo Harmonic, 실시간 RTF≈1·GPU 렌더. Go2는 박스 플레이스홀더라 실기 정합(sim-to-real) 갭이 있다. 가스·전도 극단 시나리오는 안전상 시뮬에서만 수행. OCR은 조명·각도에 취약 → ROI·임계 알람으로 완화. 모듈이 담당자별(도훈/운학·태우/채현/수현)로 나뉘므로 /cmd_vel, /mission/status 등 토픽 계약을 어기면 통합 런치가 깨진다. 대응: 통합 launch로 인터페이스를 고정하고, 실패 시 복귀(RTH)·관제 알람을 기본 동작으로 둔다.</div>
+    </article>
+    <article class="card amber wide">
+      <div class="num">10 · SUCCESS</div><h2>성공 기준</h2>
+      <div class="prompt">Baseline 대비 어느 수준까지 개선되면 성공인가?</div>
+      <div class="filled">동일 월드에서 ① 복도 순찰 완주율 100% ② 공장 게이지를 OCR로 읽고 관제에 표시(MAE는 실험 후 REPORT에 확정, 육안·더미 0보다 낮을 것) ③ 임계 알람만 쓰는 규칙 대비 누출원 도달 시간 단축 ④ 전도 시 회복 후 임무 재개 ⑤ 관제에서 위치·미션·게이지·농도를 한 화면에서 확인. 위 항목을 REPORT.md 표와 관제 캡처로 판정한다.</div>
+    </article>
+  </div>
+  <section class="flow">
+    <h2>입력부터 사용자 행동까지의 시스템 흐름</h2>
+    <div class="pipeline">
+      <div class="node"><label>INPUT</label><div class="filled">LiDAR·IMU·RGB
+열화상·odom·가스농도
+웨이포인트 YAML
+게이지·탱크 포즈</div></div>
+      <div class="arr">→</div>
+      <div class="node"><label>AI TASK 1</label><div class="filled">elevation map + MPC
+보행·전도 회복
+순찰 다음 목표 생성</div></div>
+      <div class="arr">→</div>
+      <div class="node"><label>AI TASK 2 / LOGIC</label><div class="filled">게이지 OCR·열화상 알람
+농도 구배 소스 시킹
+임계 초과·임무 종료 시 RTH</div></div>
+      <div class="arr">→</div>
+      <div class="node"><label>ACTION</label><div class="filled">Go2 트윈 이동·정차 점검
+관제 웹 알람 표시
+운용자: 계속/중단/복귀</div></div>
+    </div>
+  </section>
+  <section class="review">
+    <h2>제출 전 점검</h2>
+    <div class="checks">
+      <div>✓ 팀원 모두 같은 문제를 설명할 수 있다.</div>
+      <div>✓ Input–Task–Output이 논리적으로 연결된다.</div>
+      <div>✓ 성공을 Baseline과 KPI로 증명할 수 있다.</div>
+    </div>
+  </section>
+</section>
+<footer class="footer">코디세이 WebApp PBL · Project Definition Canvas 학생용 양식</footer>
+</main>
+</body>
+</html>
