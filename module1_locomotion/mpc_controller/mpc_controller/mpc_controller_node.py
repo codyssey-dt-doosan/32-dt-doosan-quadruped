@@ -1,6 +1,7 @@
-"""elevation map 전방 헤딩 스캔으로 장애물 피해 /patrol/goal로 간다. 진짜 MPC 아님(향후)."""
+"""elevation map 위에서 /patrol/goal로 가는 /cmd_vel. planner=mpc(샘플링 MPC, 기본) | heading_scan(지평 1스텝 폴백)."""
 
 import math
+import time
 
 import numpy as np
 import rclpy
@@ -24,7 +25,7 @@ def scan_offsets(scan_max: float, scan_step: float) -> list[float]:
     return [0.0] + [s * k * scan_step for k in range(1, k_max + 1) for s in (1.0, -1.0)]
 
 
-# ponytail: 지평 1스텝 헤딩 스캔. 운동학 MPC 필요하면 이 함수만 receding-horizon 최적화로 교체
+# 지평 1스텝 헤딩 스캔. planner=heading_scan 폴백·비교용
 def pick_heading(
     grid: np.ndarray,
     goal_rel: float,
@@ -177,6 +178,11 @@ class MpcControllerNode(Node):
         self.declare_parameter("scan_step_deg", 10.0)
         self.declare_parameter("timeout", 1.0)
         self.declare_parameter("fall_timeout", 2.0)  # status 2 Hz. fall_recovery 죽으면 이 시간 후 주행 복귀
+        self.declare_parameter("planner", "mpc")  # mpc | heading_scan
+        self.declare_parameter("horizon", 10)
+        self.declare_parameter("dt", 0.2)
+        self.declare_parameter("n_w", 9)
+        self.declare_parameter("w_turn", 0.1)
         self.declare_parameter("resolution", 0.1)
         self.declare_parameter("size", 4.0)
 
@@ -189,6 +195,9 @@ class MpcControllerNode(Node):
         self.grid_time = None
         self._blocked = False
         self._grid_warned = False
+        self._plan_ms_sum = 0.0
+        self._plan_ms_max = 0.0
+        self._plan_count = 0
         self.fall_status: str | None = None
         self.fall_time = None
 
@@ -198,7 +207,7 @@ class MpcControllerNode(Node):
         self.create_subscription(String, "/fall_recovery/status", self.fall_status_cb, 10)
         self.pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.create_timer(0.1, self._tick)
-        self.get_logger().info("mpc_controller started (도훈)")
+        self.get_logger().info(f"mpc_controller started (도훈) planner={self.get_parameter('planner').value}")
 
     def goal_cb(self, msg: PoseStamped) -> None:
         self.goal_msg = msg
@@ -269,22 +278,51 @@ class MpcControllerNode(Node):
         dist = math.hypot(gx - x, gy - y)
         goal_rel = wrap_angle(math.atan2(gy - y, gx - x) - yaw)
 
-        h = pick_heading(
-            self.grid, goal_rel, resolution, size, lookahead, half_width, obstacle_h, scan_max, scan_step
-        )
+        planner = self.get_parameter("planner").value
+        t0 = time.perf_counter()
+        if planner == "mpc":
+            if dist < stop_dist:
+                res: tuple[float, float] | None = (0.0, 0.0)
+            else:
+                res = plan_mpc(
+                    self.grid,
+                    (dist * math.cos(goal_rel), dist * math.sin(goal_rel)),
+                    resolution=resolution,
+                    size=size,
+                    v_max=v_max,
+                    w_max=w_max,
+                    half_width=half_width,
+                    obstacle_h=obstacle_h,
+                    horizon=self.get_parameter("horizon").value,
+                    dt=self.get_parameter("dt").value,
+                    n_w=self.get_parameter("n_w").value,
+                    w_turn=self.get_parameter("w_turn").value,
+                )
+            blocked = res is None
+            v, w = blocked_cmd(goal_rel, w_max) if blocked else res  # 막히면 제자리에서 goal 쪽으로 선회
+        else:
+            h = pick_heading(
+                self.grid, goal_rel, resolution, size, lookahead, half_width, obstacle_h, scan_max, scan_step
+            )
+            blocked = h is None
+            v, w = blocked_cmd(goal_rel, w_max) if blocked else goal_to_cmd(dist, h, v_max, w_max, k_ang, stop_dist)
+        ms = (time.perf_counter() - t0) * 1e3
+        self._plan_ms_sum += ms
+        self._plan_ms_max = max(self._plan_ms_max, ms)
+        self._plan_count += 1
+        if self._plan_count % 100 == 0:
+            self.get_logger().info(
+                f"{planner} 계산 평균 {self._plan_ms_sum / 100:.1f} ms, 최대 {self._plan_ms_max:.1f} ms"
+            )
+            self._plan_ms_sum = 0.0
+            self._plan_ms_max = 0.0
 
-        blocked = h is None
         if blocked != self._blocked:
             self._blocked = blocked
             if blocked:
                 self.get_logger().info("경로 막힘: 제자리 회전으로 전환")
             else:
-                self.get_logger().info("경로 재탐색: 헤딩 스캔 재개")
-
-        if h is None:
-            v, w = blocked_cmd(goal_rel, w_max)  # 막히면 제자리에서 goal 쪽으로 선회
-        else:
-            v, w = goal_to_cmd(dist, h, v_max, w_max, k_ang, stop_dist)
+                self.get_logger().info("경로 재탐색: 계획 재개")
 
         cmd = Twist()
         cmd.linear.x = v
