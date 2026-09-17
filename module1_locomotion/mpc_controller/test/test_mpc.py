@@ -6,7 +6,9 @@ from mpc_controller.mpc_controller_node import (
     blocked_cmd,
     goal_to_cmd,
     halt_for_fall,
+    inflate,
     pick_heading,
+    rollout,
     scan_offsets,
     wrap_angle,
 )
@@ -147,3 +149,39 @@ def test_scan_offsets_float_boundary():
     assert scan_offsets(math.radians(60.0), 0.0) == [0.0]
     offs = scan_offsets(math.radians(20.0), math.radians(10.0))
     assert offs[0] == 0.0 and offs[1] > 0 and offs[2] < 0  # goal 가까운 순, +먼저
+
+
+def test_inflate_square_window():
+    occ = np.zeros((20, 20), dtype=bool)
+    occ[10, 10] = True
+    out = inflate(occ, 2)
+    assert out.sum() == 25
+    assert out[8:13, 8:13].all()
+    assert not out[7, 10] and not out[13, 10]
+
+
+def test_inflate_edge_and_zero():
+    occ = np.zeros((5, 5), dtype=bool)
+    occ[0, 0] = True
+    assert inflate(occ, 1).sum() == 4
+    same = inflate(occ, 0)
+    assert same.sum() == 1 and same is not occ
+
+
+def test_rollout_straight_and_turn():
+    dt = 0.2
+    v = np.array([[0.5] * 5, [0.0] * 5])
+    w = np.array([[0.0] * 5, [1.0] * 5])
+    x, y, th = rollout(v, w, dt)
+    assert x.shape == (2, 5)
+    assert np.allclose(x[0], [0.1, 0.2, 0.3, 0.4, 0.5])
+    assert np.allclose(y[0], 0.0)
+    assert np.allclose(th[1], [0.2, 0.4, 0.6, 0.8, 1.0])
+    assert np.allclose(x[1], 0.0) and np.allclose(y[1], 0.0)
+    # 회전하며 전진: 첫 스텝은 θ=0으로 이동, 둘째 스텝은 θ=0.2로 이동
+    v2 = np.array([[0.5, 0.5]])
+    w2 = np.array([[1.0, 1.0]])
+    x2, y2, _ = rollout(v2, w2, dt)
+    assert np.isclose(x2[0, 0], 0.1) and np.isclose(y2[0, 0], 0.0)
+    assert np.isclose(x2[0, 1], 0.1 + 0.1 * math.cos(0.2))
+    assert np.isclose(y2[0, 1], 0.1 * math.sin(0.2))

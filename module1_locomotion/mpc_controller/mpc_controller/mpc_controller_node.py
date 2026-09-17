@@ -86,6 +86,30 @@ def halt_for_fall(status: str | None) -> bool:
     return status in HALT_STATES
 
 
+def inflate(occ: np.ndarray, cells: int) -> np.ndarray:
+    """bool 점유 그리드를 체비쇼프 반경 cells(정사각 창)만큼 팽창. 발자국 반경 보정용."""
+    if cells <= 0:
+        return occ.copy()
+    n = occ.shape[0]
+    pad = np.zeros((n + 2 * cells, n + 2 * cells), dtype=bool)
+    pad[cells : cells + n, cells : cells + n] = occ
+    out = np.zeros_like(occ, dtype=bool)
+    for di in range(-cells, cells + 1):
+        for dj in range(-cells, cells + 1):
+            out |= pad[cells + di : cells + di + n, cells + dj : cells + dj + n]
+    return out
+
+
+def rollout(v: np.ndarray, w: np.ndarray, dt: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """유니사이클 롤아웃. v, w: (M, H) 스텝별 입력. 반환 x, y, theta: (M, H) 각 스텝 후 포즈, 시작 (0,0,0).
+    스텝 k 이동은 스텝 시작 헤딩 theta_{k-1}로 계산."""
+    theta = np.cumsum(w * dt, axis=1)
+    theta_prev = np.concatenate([np.zeros((v.shape[0], 1)), theta[:, :-1]], axis=1)
+    x = np.cumsum(v * np.cos(theta_prev) * dt, axis=1)
+    y = np.cumsum(v * np.sin(theta_prev) * dt, axis=1)
+    return x, y, theta
+
+
 class MpcControllerNode(Node):
     def __init__(self) -> None:
         super().__init__("mpc_controller")
