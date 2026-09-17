@@ -37,6 +37,7 @@ MPC = dict(
     dt=0.2,
     n_w=9,
     w_turn=0.1,
+    w_head=0.5,
 )
 
 
@@ -259,3 +260,14 @@ def test_plan_mpc_near_goal_moves_now():
     v, w = plan_mpc(grid, (0.6, 0.0), **MPC)
     assert v > 0.0
     assert abs(w) < 0.05
+
+
+def test_plan_mpc_goal_behind_turns():
+    # goal 정반대(east_end→home 전환 실측 버그): 2 s 지평 안엔 어떤 전진도 거리를 늘려
+    # 회전 페널티가 이기면 (0,0)이 뽑혀 영구 정지. heading 오차 항이 있으면 제자리 회전이 뽑혀야 한다.
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    v, w = plan_mpc(grid, (-5.0, 0.0), **MPC)
+    assert abs(w) > 0.5
+    # 살짝 비켜 뒤(−170°)면 회전 방향이 goal 쪽(+)이어야 한다
+    v2, w2 = plan_mpc(grid, (-5.0 * math.cos(math.radians(10)), 5.0 * math.sin(math.radians(10))), **MPC)
+    assert w2 > 0.5

@@ -19,6 +19,11 @@ def wrap_angle(a: float) -> float:
     return r
 
 
+def wrap_angle_arr(a: np.ndarray) -> np.ndarray:
+    """벡터판 wrap_angle: [-pi, pi)."""
+    return (a + np.pi) % (2 * np.pi) - np.pi
+
+
 def scan_offsets(scan_max: float, scan_step: float) -> list[float]:
     """후보 헤딩 오프셋 [0, +step, -step, +2step, -2step, …], |offset| <= scan_max. step<=0이면 [0]."""
     k_max = int(scan_max / scan_step + 1e-9) if scan_step > 0 else 0  # 35°/7° = 4.999… 방지
@@ -126,10 +131,11 @@ def plan_mpc(
     dt: float,
     n_w: int,
     w_turn: float,
+    w_head: float = 0.5,
 ) -> tuple[float, float] | None:
     """로봇 프레임 goal_xy로 가는 (v, w) 첫 명령. 유니사이클 지평 horizon×dt, 2구간 (v,w) 샘플링.
     충돌 = 발자국 반경(half_width) 팽창 점유 셀 위 포즈. 정지 시퀀스 제외. 유효 시퀀스 없으면 None.
-    비용 = 지평 전체 goal 거리 평균 + w_turn·Σ|w|dt."""
+    비용 = 지평 goal 거리 평균 + w_head·|종단 heading 오차| + w_turn·Σ|w|dt."""
     n = grid.shape[0]
     occ = inflate(~np.isnan(grid) & (grid > obstacle_h), int(math.ceil(half_width / resolution)))
 
@@ -145,7 +151,7 @@ def plan_mpc(
     v_seq = np.concatenate([np.repeat(cand[i1, 0:1], h1, axis=1), np.repeat(cand[i2, 0:1], h2, axis=1)], axis=1)
     w_seq = np.concatenate([np.repeat(cand[i1, 1:2], h1, axis=1), np.repeat(cand[i2, 1:2], h2, axis=1)], axis=1)
 
-    x, y, _ = rollout(v_seq, w_seq, dt)
+    x, y, theta = rollout(v_seq, w_seq, dt)
     col = np.floor((x + size / 2) / resolution).astype(int)
     row = np.floor((y + size / 2) / resolution).astype(int)
     inside = (col >= 0) & (col < n) & (row >= 0) & (row < n)
@@ -158,7 +164,13 @@ def plan_mpc(
 
     gx, gy = goal_xy
     # 지평 평균 거리(종단 거리만 쓰면 goal 근처에서 '대기 후 전진'이 '전진 후 대기'와 동률 → 정지 명령 선택 → 영구 정지)
-    cost = np.hypot(x - gx, y - gy).mean(axis=1) + w_turn * np.abs(w_seq).sum(axis=1) * dt
+    # heading 항: goal이 뒤에 있으면 2 s 안엔 전진이 거리를 늘려 회전 페널티가 이김 → (0,0) 영구 정지. 회전을 보상해야 함
+    head_err = np.abs(wrap_angle_arr(np.arctan2(gy - y[:, -1], gx - x[:, -1]) - theta[:, -1]))
+    cost = (
+        np.hypot(x - gx, y - gy).mean(axis=1)
+        + w_head * head_err
+        + w_turn * np.abs(w_seq).sum(axis=1) * dt
+    )
     cost[~valid] = np.inf
     k = int(np.argmin(cost))
     return (float(v_seq[k, 0]), float(w_seq[k, 0]))
@@ -185,6 +197,7 @@ class MpcControllerNode(Node):
         self.declare_parameter("dt", 0.2)
         self.declare_parameter("n_w", 9)
         self.declare_parameter("w_turn", 0.1)
+        self.declare_parameter("w_head", 0.5)
         self.declare_parameter("resolution", 0.1)
         self.declare_parameter("size", 4.0)
 
@@ -299,6 +312,7 @@ class MpcControllerNode(Node):
                     dt=self.get_parameter("dt").value,
                     n_w=self.get_parameter("n_w").value,
                     w_turn=self.get_parameter("w_turn").value,
+                    w_head=self.get_parameter("w_head").value,
                 )
             blocked = res is None
             v, w = blocked_cmd(goal_rel, w_max) if blocked else res  # 막히면 제자리에서 goal 쪽으로 선회
