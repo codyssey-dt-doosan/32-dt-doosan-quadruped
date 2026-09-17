@@ -2,7 +2,14 @@ import math
 
 import numpy as np
 
-from mpc_controller.mpc_controller_node import blocked_cmd, goal_to_cmd, halt_for_fall, pick_heading, wrap_angle
+from mpc_controller.mpc_controller_node import (
+    blocked_cmd,
+    goal_to_cmd,
+    halt_for_fall,
+    pick_heading,
+    scan_offsets,
+    wrap_angle,
+)
 
 RES = 0.1
 SIZE = 4.0
@@ -131,3 +138,12 @@ def test_halt_for_fall():
     assert halt_for_fall("idle") is False
     assert halt_for_fall("recovered") is False
     assert halt_for_fall(None) is False  # fall_recovery 없이 단독 실행
+
+
+def test_scan_offsets_float_boundary():
+    # 35/7 = 4.999… → int()면 4. +1e-9로 5 → 0 + ±1..±5 = 11개
+    assert len(scan_offsets(math.radians(35.0), math.radians(7.0))) == 11
+    assert len(scan_offsets(math.radians(60.0), math.radians(10.0))) == 13
+    assert scan_offsets(math.radians(60.0), 0.0) == [0.0]
+    offs = scan_offsets(math.radians(20.0), math.radians(10.0))
+    assert offs[0] == 0.0 and offs[1] > 0 and offs[2] < 0  # goal 가까운 순, +먼저

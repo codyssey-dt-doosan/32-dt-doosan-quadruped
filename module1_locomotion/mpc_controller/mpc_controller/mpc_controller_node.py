@@ -18,6 +18,12 @@ def wrap_angle(a: float) -> float:
     return r
 
 
+def scan_offsets(scan_max: float, scan_step: float) -> list[float]:
+    """후보 헤딩 오프셋 [0, +step, -step, +2step, -2step, …], |offset| <= scan_max. step<=0이면 [0]."""
+    k_max = int(scan_max / scan_step + 1e-9) if scan_step > 0 else 0  # 35°/7° = 4.999… 방지
+    return [0.0] + [s * k * scan_step for k in range(1, k_max + 1) for s in (1.0, -1.0)]
+
+
 # ponytail: 지평 1스텝 헤딩 스캔. 운동학 MPC 필요하면 이 함수만 receding-horizon 최적화로 교체
 def pick_heading(
     grid: np.ndarray,
@@ -44,10 +50,7 @@ def pick_heading(
     occ = ~np.isnan(grid) & (grid > obstacle_h)
     cx_occ, cy_occ = cx[occ], cy[occ]
 
-    k_max = int(scan_max / scan_step) if scan_step > 0 else 0
-    offsets = [0.0] + [s * k * scan_step for k in range(1, k_max + 1) for s in (1.0, -1.0)]
-
-    for off in offsets:
+    for off in scan_offsets(scan_max, scan_step):
         h = wrap_angle(goal_rel + off)
         along = cx_occ * math.cos(h) + cy_occ * math.sin(h)
         lateral = -cx_occ * math.sin(h) + cy_occ * math.cos(h)
@@ -98,6 +101,7 @@ class MpcControllerNode(Node):
         self.declare_parameter("scan_max_deg", 60.0)
         self.declare_parameter("scan_step_deg", 10.0)
         self.declare_parameter("timeout", 1.0)
+        self.declare_parameter("fall_timeout", 2.0)  # status 2 Hz. fall_recovery 죽으면 이 시간 후 주행 복귀
         self.declare_parameter("resolution", 0.1)
         self.declare_parameter("size", 4.0)
 
@@ -111,6 +115,7 @@ class MpcControllerNode(Node):
         self._blocked = False
         self._grid_warned = False
         self.fall_status: str | None = None
+        self.fall_time = None
 
         self.create_subscription(PoseStamped, goal_topic, self.goal_cb, 10)
         self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
@@ -134,6 +139,7 @@ class MpcControllerNode(Node):
                 f"fall_recovery {msg.data}: " + ("정지" if halt_for_fall(msg.data) else "주행 재개")
             )
         self.fall_status = msg.data
+        self.fall_time = self.get_clock().now()
 
     def elevation_map_cb(self, msg: Float32MultiArray) -> None:
         try:
@@ -153,7 +159,8 @@ class MpcControllerNode(Node):
         return (self.get_clock().now() - t).nanoseconds / 1e9 > timeout
 
     def _tick(self) -> None:
-        if halt_for_fall(self.fall_status):
+        fall_timeout = self.get_parameter("fall_timeout").value
+        if not self._stale(self.fall_time, fall_timeout) and halt_for_fall(self.fall_status):
             self.pub.publish(Twist())
             return
         timeout = self.get_parameter("timeout").value
