@@ -220,7 +220,7 @@ def test_plan_mpc_frontal_obstacle_detours():
     res = plan_mpc(grid, (2.0, 0.0), **MPC)
     assert res is not None
     v, w = res
-    assert w != 0.0 or v == 0.0  # 직진 v_max·w=0 은 팽창된 장애물과 충돌하므로 선택 불가
+    assert not (v == 0.5 and w == 0.0)  # 전속 직진은 팽창된 장애물(x≥0.4)과 충돌하므로 선택 불가
 
 
 def test_plan_mpc_enclosed_returns_none():
@@ -250,3 +250,12 @@ def test_plan_mpc_time_budget():
         plan_mpc(grid, (2.0, 0.3), **MPC)
     per_call = (time.perf_counter() - t0) / 10
     assert per_call < 0.02, f"plan_mpc {per_call*1e3:.1f} ms"
+
+
+def test_plan_mpc_near_goal_moves_now():
+    # goal 0.6 m 앞: '대기 후 전진'과 '전진 후 대기'가 종단 거리 동률이면 정지 명령이 뽑혀 영구 정지(실측 버그).
+    # 지평 평균 거리 비용이면 지금 움직이는 쪽이 이겨야 한다.
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    v, w = plan_mpc(grid, (0.6, 0.0), **MPC)
+    assert v > 0.0
+    assert abs(w) < 0.05

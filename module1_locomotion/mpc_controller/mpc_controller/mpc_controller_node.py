@@ -128,7 +128,8 @@ def plan_mpc(
     w_turn: float,
 ) -> tuple[float, float] | None:
     """로봇 프레임 goal_xy로 가는 (v, w) 첫 명령. 유니사이클 지평 horizon×dt, 2구간 (v,w) 샘플링.
-    충돌 = 발자국 반경(half_width) 팽창 점유 셀 위 포즈. 정지 시퀀스 제외. 유효 시퀀스 없으면 None."""
+    충돌 = 발자국 반경(half_width) 팽창 점유 셀 위 포즈. 정지 시퀀스 제외. 유효 시퀀스 없으면 None.
+    비용 = 지평 전체 goal 거리 평균 + w_turn·Σ|w|dt."""
     n = grid.shape[0]
     occ = inflate(~np.isnan(grid) & (grid > obstacle_h), int(math.ceil(half_width / resolution)))
 
@@ -156,7 +157,8 @@ def plan_mpc(
         return None
 
     gx, gy = goal_xy
-    cost = np.hypot(x[:, -1] - gx, y[:, -1] - gy) + w_turn * np.abs(w_seq).sum(axis=1) * dt
+    # 지평 평균 거리(종단 거리만 쓰면 goal 근처에서 '대기 후 전진'이 '전진 후 대기'와 동률 → 정지 명령 선택 → 영구 정지)
+    cost = np.hypot(x - gx, y - gy).mean(axis=1) + w_turn * np.abs(w_seq).sum(axis=1) * dt
     cost[~valid] = np.inf
     k = int(np.argmin(cost))
     return (float(v_seq[k, 0]), float(w_seq[k, 0]))
