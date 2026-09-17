@@ -116,6 +116,13 @@ def rollout(v: np.ndarray, w: np.ndarray, dt: float) -> tuple[np.ndarray, np.nda
     return x, y, theta
 
 
+def reference_goal(dist: float, heading: float, lookahead: float) -> tuple[float, float]:
+    """MPC 가상 goal: 헤딩 스캔이 준 자유 헤딩 방향으로 min(dist, lookahead) 지점(로봇 프레임).
+    실제 goal을 직접 주면 2 s 지평이 근시안이라 장애물 앞 포켓에 갇힘(2026-09-17 corridor 실측)."""
+    r = min(dist, lookahead)
+    return (r * math.cos(heading), r * math.sin(heading))
+
+
 # ponytail: 샘플링 MPC(2구간 입력 729시퀀스). 동역학·접지력 MPC 필요하면 planner 값 추가해 같은 계약으로 별도 함수
 def plan_mpc(
     grid: np.ndarray,
@@ -296,12 +303,17 @@ class MpcControllerNode(Node):
         planner = self.get_parameter("planner").value
         t0 = time.perf_counter()
         if planner == "mpc":
+            h = pick_heading(
+                self.grid, goal_rel, resolution, size, lookahead, half_width, obstacle_h, scan_max, scan_step
+            )
             if dist < stop_dist:
                 res: tuple[float, float] | None = (0.0, 0.0)
+            elif h is None:
+                res = None
             else:
                 res = plan_mpc(
                     self.grid,
-                    (dist * math.cos(goal_rel), dist * math.sin(goal_rel)),
+                    reference_goal(dist, h, lookahead),
                     resolution=resolution,
                     size=size,
                     v_max=v_max,

@@ -13,7 +13,7 @@ ros2 launch mpc_controller mpc_controller.launch.py planner:=heading_scan # 폴�
 
 | `planner` | 방식 |
 |-----------|------|
-| `mpc` (기본) | 샘플링 MPC. 유니사이클 지평 `horizon`×`dt`(10×0.2 s), 입력 (v,w)를 앞·뒤 2구간으로 나눠 (3×`n_w`)² = 729 시퀀스 롤아웃. 발자국 반경(`half_width`)만큼 팽창한 점유 셀에 닿는 시퀀스와 정지 시퀀스 제외. 비용 = 지평 goal 거리 평균 + `w_head`·\|종단 heading 오차\| + `w_turn`·Σ\|w\|dt. 최소 비용 시퀀스의 첫 (v,w) 실행, 매 틱 재계획 |
+| `mpc` (기본) | 헤딩 스캔이 준 자유 헤딩 방향 `min(dist, lookahead)` 지점을 참조 goal로 삼는 샘플링 MPC. 유니사이클 지평 `horizon`×`dt`(10×0.2 s), 입력 (v,w)를 앞·뒤 2구간으로 나눠 (3×`n_w`)² = 729 시퀀스 롤아웃. 발자국 반경(`half_width`)만큼 팽창한 점유 셀에 닿는 시퀀스와 정지 시퀀스 제외. 비용 = 지평 goal 거리 평균 + `w_head`·\|종단 heading 오차\| + `w_turn`·Σ\|w\|dt. 최소 비용 시퀀스의 첫 (v,w) 실행, 매 틱 재계획 |
 | `heading_scan` | goal 방향 ±`scan_max_deg` 후보를 `scan_step_deg` 간격으로, 전방 `lookahead`×±`half_width` 통로가 비는 첫 헤딩 선택. 지평 1스텝 |
 
 둘 다 전부 막히면 goal 쪽으로 제자리 선회(`blocked_cmd`). `dist < stop_dist`면 정지.
@@ -26,7 +26,7 @@ goal·odom·elevation_map 중 하나라도 `timeout`(1 s) 미수신 → 0. `/fal
 
 공통: `v_max` 0.5 · `w_max` 1.0 · `stop_dist` 0.3 · `half_width` 0.35 · `obstacle_h` 0.15 · `resolution` 0.1 · `size` 4.0 · `timeout` 1.0 · `fall_timeout` 2.0
 mpc: `horizon` 10 · `dt` 0.2 · `n_w` 9 · `w_turn` 0.1 · `w_head` 0.5
-heading_scan: `lookahead` 1.5 · `scan_max_deg` 60 · `scan_step_deg` 10 · `k_ang` 1.5
+heading_scan(참조 헤딩으로 mpc도 사용): `lookahead` 1.5 · `scan_max_deg` 60 · `scan_step_deg` 10 · `k_ang` 1.5(heading_scan 전용)
 
 ## 테스트·실험
 

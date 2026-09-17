@@ -9,6 +9,7 @@ from mpc_controller.mpc_controller_node import (
     inflate,
     pick_heading,
     plan_mpc,
+    reference_goal,
     rollout,
     scan_offsets,
     wrap_angle,
@@ -271,3 +272,35 @@ def test_plan_mpc_goal_behind_turns():
     # 살짝 비켜 뒤(−170°)면 회전 방향이 goal 쪽(+)이어야 한다
     v2, w2 = plan_mpc(grid, (-5.0 * math.cos(math.radians(10)), 5.0 * math.sin(math.radians(10))), **MPC)
     assert w2 > 0.5
+
+
+# 2026-09-17 corridor 실측 덤프: obstacle_2 동쪽 1.1 m, 벽이 대각선으로 보이는 프레임. 로봇이 팽창 장애물 0.2 m 앞 포켓에 갇혀
+# plan_mpc(실제 goal)가 (0, ±1) 회전만 반복하던 상황. (row, col) 점유 셀.
+POCKET_OCC = [
+    (17, 26), (17, 27), (18, 26), (19, 26), (20, 26), (21, 26), (27, 0), (27, 1), (27, 2), (28, 2), (28, 3),
+    (28, 4), (28, 5), (28, 6), (28, 7), (28, 8), (28, 9), (29, 9), (29, 10), (29, 11), (29, 12), (29, 13),
+    (29, 14), (29, 15), (30, 14), (30, 15), (30, 16), (30, 17), (30, 18), (30, 19), (30, 20), (30, 21),
+    (31, 21), (31, 22), (31, 23), (31, 24), (31, 25), (31, 26), (31, 27), (32, 27), (32, 28), (32, 29),
+    (32, 30), (32, 31), (32, 32), (32, 33), (33, 33), (33, 34), (33, 35), (33, 36), (33, 37), (33, 38), (34, 39),
+]
+
+
+def test_reference_goal():
+    assert reference_goal(15.0, 0.0, 1.5) == (1.5, 0.0)
+    x, y = reference_goal(0.8, math.pi / 2, 1.5)
+    assert abs(x) < 1e-9 and math.isclose(y, 0.8)
+
+
+def test_plan_mpc_pocket_regression_with_reference_heading():
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    for r, c in POCKET_OCC:
+        grid[r, c] = 0.65
+    dist, goal_rel = 15.12, 0.018
+    # 실제 goal을 그대로 주면 포켓에서 회전만 나온다(원인 기록)
+    v0, w0 = plan_mpc(grid, (dist * math.cos(goal_rel), dist * math.sin(goal_rel)), **MPC)
+    assert v0 == 0.0 and abs(w0) == 1.0
+    # 헤딩 스캔 참조(−59°)를 가상 goal로 주면 자유 방향으로 일관되게 회전해 탈출
+    h = pick_heading(grid, goal_rel, **COMMON)
+    assert h is not None and h < math.radians(-40)
+    v, w = plan_mpc(grid, reference_goal(dist, h, 1.5), **MPC)
+    assert w < -0.5
