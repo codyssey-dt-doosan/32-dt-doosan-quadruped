@@ -8,6 +8,7 @@ from mpc_controller.mpc_controller_node import (
     halt_for_fall,
     inflate,
     pick_heading,
+    plan_mpc,
     rollout,
     scan_offsets,
     wrap_angle,
@@ -24,6 +25,18 @@ COMMON = dict(
     obstacle_h=0.15,
     scan_max=math.radians(60.0),
     scan_step=math.radians(10.0),
+)
+MPC = dict(
+    resolution=RES,
+    size=SIZE,
+    v_max=0.5,
+    w_max=1.0,
+    half_width=0.35,
+    obstacle_h=0.15,
+    horizon=10,
+    dt=0.2,
+    n_w=9,
+    w_turn=0.1,
 )
 
 
@@ -185,3 +198,55 @@ def test_rollout_straight_and_turn():
     assert np.isclose(x2[0, 0], 0.1) and np.isclose(y2[0, 0], 0.0)
     assert np.isclose(x2[0, 1], 0.1 + 0.1 * math.cos(0.2))
     assert np.isclose(y2[0, 1], 0.1 * math.sin(0.2))
+
+
+def test_plan_mpc_empty_grid_goal_ahead():
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    v, w = plan_mpc(grid, (2.0, 0.0), **MPC)
+    assert v == 0.5
+    assert abs(w) < 0.05
+
+
+def test_plan_mpc_goal_left_turns_left():
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    v, w = plan_mpc(grid, (0.0, 2.0), **MPC)
+    assert w > 0.0
+
+
+def test_plan_mpc_frontal_obstacle_detours():
+    cx, cy = _cell_centers()
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    grid[(cx >= 0.8) & (cx <= 1.2) & (cy >= -0.2) & (cy <= 0.2)] = 0.65
+    res = plan_mpc(grid, (2.0, 0.0), **MPC)
+    assert res is not None
+    v, w = res
+    assert w != 0.0 or v == 0.0  # 직진 v_max·w=0 은 팽창된 장애물과 충돌하므로 선택 불가
+
+
+def test_plan_mpc_enclosed_returns_none():
+    cx, cy = _cell_centers()
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    r = np.hypot(cx, cy)
+    grid[(r >= 0.5) & (r <= 0.7)] = 0.65
+    assert plan_mpc(grid, (2.0, 0.0), **MPC) is None
+
+
+def test_plan_mpc_outside_grid_is_free():
+    # 1 m 그리드(n=10)라 지평 1 m 롤아웃이 그리드를 벗어남 → 인덱스 오류 없이 자유 취급
+    small = np.full((10, 10), np.nan, dtype=np.float32)
+    v, w = plan_mpc(small, (5.0, 0.0), **dict(MPC, size=1.0))
+    assert v == 0.5 and abs(w) < 0.05
+
+
+def test_plan_mpc_time_budget():
+    import time
+
+    cx, cy = _cell_centers()
+    grid = np.zeros((N, N), dtype=np.float32)
+    grid[(cx >= 0.8) & (cx <= 1.2) & (cy >= -0.2) & (cy <= 0.2)] = 0.65
+    plan_mpc(grid, (2.0, 0.3), **MPC)  # warm-up
+    t0 = time.perf_counter()
+    for _ in range(10):
+        plan_mpc(grid, (2.0, 0.3), **MPC)
+    per_call = (time.perf_counter() - t0) / 10
+    assert per_call < 0.02, f"plan_mpc {per_call*1e3:.1f} ms"

@@ -110,6 +110,57 @@ def rollout(v: np.ndarray, w: np.ndarray, dt: float) -> tuple[np.ndarray, np.nda
     return x, y, theta
 
 
+# ponytail: 샘플링 MPC(2구간 입력 729시퀀스). 동역학·접지력 MPC 필요하면 planner 값 추가해 같은 계약으로 별도 함수
+def plan_mpc(
+    grid: np.ndarray,
+    goal_xy: tuple[float, float],
+    *,
+    resolution: float,
+    size: float,
+    v_max: float,
+    w_max: float,
+    half_width: float,
+    obstacle_h: float,
+    horizon: int,
+    dt: float,
+    n_w: int,
+    w_turn: float,
+) -> tuple[float, float] | None:
+    """로봇 프레임 goal_xy로 가는 (v, w) 첫 명령. 유니사이클 지평 horizon×dt, 2구간 (v,w) 샘플링.
+    충돌 = 발자국 반경(half_width) 팽창 점유 셀 위 포즈. 정지 시퀀스 제외. 유효 시퀀스 없으면 None."""
+    n = grid.shape[0]
+    occ = inflate(~np.isnan(grid) & (grid > obstacle_h), int(math.ceil(half_width / resolution)))
+
+    vs = np.array([0.0, v_max / 2, v_max])
+    ws = np.linspace(-w_max, w_max, n_w)
+    V, W = np.meshgrid(vs, ws, indexing="ij")
+    cand = np.stack([V.ravel(), W.ravel()], axis=1)  # (m, 2)
+    m = len(cand)
+    i1, i2 = np.meshgrid(np.arange(m), np.arange(m), indexing="ij")
+    i1, i2 = i1.ravel(), i2.ravel()  # (m*m,)
+    h1 = horizon // 2
+    h2 = horizon - h1
+    v_seq = np.concatenate([np.repeat(cand[i1, 0:1], h1, axis=1), np.repeat(cand[i2, 0:1], h2, axis=1)], axis=1)
+    w_seq = np.concatenate([np.repeat(cand[i1, 1:2], h1, axis=1), np.repeat(cand[i2, 1:2], h2, axis=1)], axis=1)
+
+    x, y, _ = rollout(v_seq, w_seq, dt)
+    col = np.floor((x + size / 2) / resolution).astype(int)
+    row = np.floor((y + size / 2) / resolution).astype(int)
+    inside = (col >= 0) & (col < n) & (row >= 0) & (row < n)
+    hit = np.zeros(x.shape, dtype=bool)
+    hit[inside] = occ[row[inside], col[inside]]
+    stationary = (cand[i1, 0] == 0.0) & (cand[i2, 0] == 0.0)
+    valid = ~hit.any(axis=1) & ~stationary
+    if not valid.any():
+        return None
+
+    gx, gy = goal_xy
+    cost = np.hypot(x[:, -1] - gx, y[:, -1] - gy) + w_turn * np.abs(w_seq).sum(axis=1) * dt
+    cost[~valid] = np.inf
+    k = int(np.argmin(cost))
+    return (float(v_seq[k, 0]), float(w_seq[k, 0]))
+
+
 class MpcControllerNode(Node):
     def __init__(self) -> None:
         super().__init__("mpc_controller")
