@@ -1,0 +1,18 @@
+# 복도 45 × 3.5 m: 남쪽 벽 배관 (15, -1.6)에서 누출, 복도 환기류가 홈(-20, 0) 쪽(-x)으로 분다.
+plume_sim:
+  ros__parameters:
+    source_x: 15.0
+    source_y: -1.6
+    release_rate: 150.0
+    wind_direction: 3.1416
+    wind_speed: 0.5
+    sigma0: 0.3
+    spread: 0.25
+    near_radius: 0.8
+    decoys: [0.0, 1.2, 12.0, 1.2]    # 북쪽 벽 정체 구역 -> 국소 최대
+    background: 0.5
+    rel_noise: 0.10
+    abs_noise: 0.3
+    wind_dir_noise: 0.15
+    seed: 0
+    field_bounds: [-22.5, -1.75, 22.5, 1.75]
