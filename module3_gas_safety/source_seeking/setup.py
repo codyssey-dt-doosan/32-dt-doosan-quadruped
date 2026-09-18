@@ -12,6 +12,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
+        (os.path.join("share", package_name, "config"), glob("config/*.yaml")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -23,6 +24,8 @@ setup(
     entry_points={
         "console_scripts": [
             "source_seeking_node = source_seeking.source_seeking_node:main",
+            "offline_sim = source_seeking.offline_sim:main",
+            "plot_run = source_seeking.plot_run:main",
         ],
     },
 )

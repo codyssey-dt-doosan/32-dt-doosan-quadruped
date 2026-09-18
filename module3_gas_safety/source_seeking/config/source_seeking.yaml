@@ -1,0 +1,47 @@
+# 누출원 탐색 파라미터 (월드 공통). 월드별 주행 영역은 world_<world>.yaml.
+source_seeking:
+  ros__parameters:
+    rate: 10.0
+    drive_mode: goal                 # goal: /source_seeking/goal -> mpc_controller | cmd_vel: 직접 /cmd_vel (단독 시험용)
+    log_file: ""                     # 예: /tmp/gas_run -> .csv/.json 기록 (plot_run으로 그림)
+    mode: hybrid                     # hybrid (바람+구배) | gradient (구배만)
+    lookahead: 1.5
+    waypoint_tolerance: 0.4
+    conc_filter_alpha: 0.3
+    detect_threshold: 3.0
+    lost_time: 8.0
+    found_min_conc: 40.0
+    grad_window: 6.0
+    min_grad: 0.3
+    weave_amplitude: 0.6
+    weave_period: 6.0
+    upwind_weight: 1.0
+    gradient_weight: 1.0
+    min_wind_speed: 0.1
+    stuck_window: 30.0
+    stuck_radius: 1.2
+    noimprove_time: 40.0
+    noimprove_travel: 4.0
+    improve_ratio: 0.05
+    overshoot_ratio: 0.5
+    overshoot_time: 3.0
+    escape_start_radius: 0.5
+    escape_pitch: 2.0
+    escape_max_radius: 5.0
+    escape_step: 0.6
+    escape_improve_ratio: 0.08
+    escape_confirm_time: 1.5
+    confirm_max_radius: 2.5
+    tabu_radius: 3.0
+    obstacle_clearance: 1.0
+    detour_distance: 1.2
+    search_pitch: 2.5
+    search_max_radius: 12.0
+    # 주행 (cmd_vel 모드 조향, 막힘 감지는 두 모드 공통)
+    max_speed: 0.35
+    max_turn: 0.8
+    heading_gain: 1.5
+    blocked_time: 3.0
+    blocked_distance: 0.1
+    blocked_yaw: 0.15
+    arrive_distance: 0.4
