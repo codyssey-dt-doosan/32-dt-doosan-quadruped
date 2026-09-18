@@ -1,0 +1,32 @@
+# 복귀 규칙: 배터리% <= return_safety_factor × 집까지 경로(m) × battery_per_meter + battery_reserve
+return_to_home:
+  ros__parameters:
+    rate: 10.0
+    drive_mode: goal                 # goal: /return_to_home/goal -> mpc_controller | cmd_vel: 직접 /cmd_vel
+    battery_per_meter: 0.5
+    return_safety_factor: 1.5
+    battery_reserve: 10.0
+    max_range: 50.0                  # 복도 45 m
+    max_mission_time: 1200.0
+    danger_conc: 0.0
+    return_after_found: true
+    found_hold_time: 5.0
+    breadcrumb_spacing: 1.0
+    breadcrumb_link: 1.8
+    waypoint_tolerance: 0.4
+    home_tolerance: 0.5
+    max_speed: 0.35
+    max_turn: 0.8
+    heading_gain: 1.5
+    blocked_time: 3.0
+    blocked_distance: 0.1
+    blocked_yaw: 0.15
+    arrive_distance: 0.4
+
+# 트윈에 배터리가 없어 거리·시간 비례로 흉내 낸다
+battery_sim:
+  ros__parameters:
+    rate: 5.0
+    initial_percent: 100.0
+    drain_per_meter: 0.5
+    drain_per_second: 0.02

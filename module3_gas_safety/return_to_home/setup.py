@@ -12,6 +12,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
+        (os.path.join("share", package_name, "config"), glob("config/*.yaml")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -23,6 +24,7 @@ setup(
     entry_points={
         "console_scripts": [
             "return_to_home_node = return_to_home.return_to_home_node:main",
+            "battery_sim_node = return_to_home.battery_sim_node:main",
         ],
     },
 )
