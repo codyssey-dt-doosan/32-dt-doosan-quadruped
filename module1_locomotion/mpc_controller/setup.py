@@ -17,7 +17,7 @@ setup(
     zip_safe=True,
     maintainer="도훈",
     maintainer_email="team@doosan.local",
-    description="CoM/접지력 MPC로 cmd_vel 또는 관절 명령을 낸다.",
+    description="elevation map 전방 헤딩 스캔으로 장애물 피해 /patrol/goal로 간다. 진짜 MPC 아님(향후).",
     license="Apache-2.0",
     tests_require=["pytest"],
     entry_points={

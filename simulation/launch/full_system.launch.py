@@ -20,6 +20,7 @@ from launch.substitutions import PathJoinSubstitution
 def _launch_setup(context, *args, **kwargs):
     world = LaunchConfiguration("world").perform(context)
     gui = LaunchConfiguration("gui").perform(context).lower() == "true"
+    planner = LaunchConfiguration("planner").perform(context)
 
     sim_share = get_package_share_directory("simulation")
     world_file = os.path.join(sim_share, "worlds", f"{world}.sdf")
@@ -62,7 +63,7 @@ def _launch_setup(context, *args, **kwargs):
             PythonLaunchDescriptionSource(
                 PathJoinSubstitution([FindPackageShare(pkg), "launch", launch_file])
             ),
-            launch_arguments={"world": world}.items(),
+            launch_arguments={"world": world, "planner": planner}.items(),
         )
         for pkg, launch_file in (
             ("elevation_map", "elevation_map.launch.py"),
@@ -98,6 +99,11 @@ def generate_launch_description() -> LaunchDescription:
                 "gui",
                 default_value="true",
                 description="Gazebo GUI 사용 여부",
+            ),
+            DeclareLaunchArgument(
+                "planner",
+                default_value="mpc",
+                description="mpc_controller 플래너: mpc | heading_scan",
             ),
             OpaqueFunction(function=_launch_setup),
         ]
