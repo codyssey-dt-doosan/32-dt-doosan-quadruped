@@ -8,6 +8,7 @@ from mpc_controller.mpc_controller_node import (
     grid_matches,
     halt_for_fall,
     inflate,
+    pick_goal_index,
     pick_heading,
     plan_mpc,
     reference_goal,
@@ -312,3 +313,13 @@ def test_grid_matches_geometry():
     assert not grid_matches(np.zeros((N, N + 1)), RES, SIZE)  # 정사각 아님
     assert not grid_matches(np.zeros((20, 20)), RES, SIZE)  # elevation_map만 size 2.0으로 바꾼 경우
     assert not grid_matches(np.zeros((N, N)), 0.2, SIZE)  # mpc만 resolution 바꾼 경우
+
+
+def test_pick_goal_index_priority_and_activity():
+    # 리스트 순서 = 우선순위. 활성 = frame_id 비어 있지 않고 timeout 안 수신
+    assert pick_goal_index(["map", "map", "map"], [0.1, 0.1, 0.1], 1.0) == 0
+    assert pick_goal_index(["", "", "map"], [0.1, 0.1, 0.1], 1.0) == 2  # 채현 스텁(빈 PoseStamped)은 비활성
+    assert pick_goal_index([None, "map", "map"], [None, 0.1, 0.1], 1.0) == 1  # 미수신 건너뜀
+    assert pick_goal_index(["map", "", "map"], [5.0, 0.1, 0.1], 1.0) == 2  # 상위가 stale이면 다음
+    assert pick_goal_index(["", "", ""], [0.1, 0.1, 0.1], 1.0) is None
+    assert pick_goal_index([None, None], [None, None], 1.0) is None

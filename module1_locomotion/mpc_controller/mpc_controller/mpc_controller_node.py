@@ -1,4 +1,4 @@
-"""elevation map 위에서 /patrol/goal로 가는 /cmd_vel. planner=mpc(샘플링 MPC, 기본) | heading_scan(지평 1스텝 폴백)."""
+"""elevation map 위에서 goal(return_to_home > source_seeking > patrol)로 가는 /cmd_vel. planner=mpc(샘플링 MPC, 기본) | heading_scan(지평 1스텝 폴백)."""
 
 import math
 import time
@@ -88,6 +88,15 @@ def grid_matches(grid: np.ndarray, resolution: float, size: float) -> bool:
     """elevation_map 셀 수가 이 노드의 resolution/size와 맞는지. 한쪽만 바꾸면 기하가 조용히 틀어지므로 거부용."""
     n = int(round(size / resolution))
     return grid.shape == (n, n)
+
+
+def pick_goal_index(frame_ids: list[str | None], ages: list[float | None], timeout: float) -> int | None:
+    """우선순위 순 goal 목록에서 첫 활성 goal 인덱스. 활성 = frame_id != "" 이고 age <= timeout. 없으면 None.
+    frame_id 빈 값 = 발행자가 비활성(채현 스텁·임무 없음) 계약."""
+    for i, (fid, age) in enumerate(zip(frame_ids, ages)):
+        if fid and age is not None and age <= timeout:
+            return i
+    return None
 
 
 HALT_STATES = frozenset({"fallen", "recovering", "failed"})
@@ -193,7 +202,8 @@ class MpcControllerNode(Node):
     def __init__(self) -> None:
         super().__init__("mpc_controller")
         self.declare_parameter("world", "corridor")  # launch가 넘김, 사용 안 함
-        self.declare_parameter("goal_topic", "/patrol/goal")
+        # 우선순위 순. frame_id 빈 PoseStamped = 비활성
+        self.declare_parameter("goal_topics", ["/return_to_home/goal", "/source_seeking/goal", "/patrol/goal"])
         self.declare_parameter("v_max", 0.5)
         self.declare_parameter("w_max", 1.0)
         self.declare_parameter("k_ang", 1.5)
@@ -214,9 +224,10 @@ class MpcControllerNode(Node):
         self.declare_parameter("resolution", 0.1)  # full_system map_resolution/map_size가 elevation_map과 같이 넘김
         self.declare_parameter("size", 4.0)
 
-        goal_topic = self.get_parameter("goal_topic").value
-        self.goal_msg: PoseStamped | None = None
-        self.goal_time = None
+        self.goal_topics: list[str] = list(self.get_parameter("goal_topics").value)
+        self.goal_msgs: list[PoseStamped | None] = [None] * len(self.goal_topics)
+        self.goal_times = [None] * len(self.goal_topics)
+        self._goal_idx: int | None = None
         self.odom_msg: Odometry | None = None
         self.odom_time = None
         self.grid: np.ndarray | None = None
@@ -229,7 +240,8 @@ class MpcControllerNode(Node):
         self.fall_status: str | None = None
         self.fall_time = None
 
-        self.create_subscription(PoseStamped, goal_topic, self.goal_cb, 10)
+        for i, topic in enumerate(self.goal_topics):
+            self.create_subscription(PoseStamped, topic, lambda msg, i=i: self.goal_cb(i, msg), 10)
         self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
         self.create_subscription(Float32MultiArray, "/elevation_map", self.elevation_map_cb, 10)
         self.create_subscription(String, "/fall_recovery/status", self.fall_status_cb, 10)
@@ -237,9 +249,9 @@ class MpcControllerNode(Node):
         self.create_timer(0.1, self._tick)
         self.get_logger().info(f"mpc_controller started (도훈) planner={self.get_parameter('planner').value}")
 
-    def goal_cb(self, msg: PoseStamped) -> None:
-        self.goal_msg = msg
-        self.goal_time = self.get_clock().now()
+    def goal_cb(self, i: int, msg: PoseStamped) -> None:
+        self.goal_msgs[i] = msg
+        self.goal_times[i] = self.get_clock().now()
 
     def odom_cb(self, msg: Odometry) -> None:
         self.odom_msg = msg
@@ -272,10 +284,14 @@ class MpcControllerNode(Node):
         self.grid = grid
         self.grid_time = self.get_clock().now()
 
-    def _stale(self, t, timeout: float) -> bool:
+    def _age(self, t) -> float | None:
         if t is None:
-            return True
-        return (self.get_clock().now() - t).nanoseconds / 1e9 > timeout
+            return None
+        return (self.get_clock().now() - t).nanoseconds / 1e9
+
+    def _stale(self, t, timeout: float) -> bool:
+        age = self._age(t)
+        return age is None or age > timeout
 
     def _tick(self) -> None:
         fall_timeout = self.get_parameter("fall_timeout").value
@@ -283,13 +299,18 @@ class MpcControllerNode(Node):
             self.pub.publish(Twist())
             return
         timeout = self.get_parameter("timeout").value
-        if (
-            self._stale(self.goal_time, timeout)
-            or self._stale(self.odom_time, timeout)
-            or self._stale(self.grid_time, timeout)
-        ):
+        idx = pick_goal_index(
+            [m.header.frame_id if m else None for m in self.goal_msgs],
+            [self._age(t) for t in self.goal_times],
+            timeout,
+        )
+        if idx != self._goal_idx:
+            self._goal_idx = idx
+            self.get_logger().info("goal 없음: 정지" if idx is None else f"goal 소스 {self.goal_topics[idx]}")
+        if idx is None or self._stale(self.odom_time, timeout) or self._stale(self.grid_time, timeout):
             self.pub.publish(Twist())
             return
+        goal_msg = self.goal_msgs[idx]
 
         resolution = self.get_parameter("resolution").value
         size = self.get_parameter("size").value
@@ -308,8 +329,8 @@ class MpcControllerNode(Node):
         q = self.odom_msg.pose.pose.orientation
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
-        gx = self.goal_msg.pose.position.x
-        gy = self.goal_msg.pose.position.y
+        gx = goal_msg.pose.position.x
+        gy = goal_msg.pose.position.y
         dist = math.hypot(gx - x, gy - y)
         goal_rel = wrap_angle(math.atan2(gy - y, gx - x) - yaw)
 

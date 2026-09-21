@@ -2,7 +2,15 @@
 
 담당: **도훈**
 
-`/patrol/goal`(PoseStamped)을 향해 elevation map 위에서 장애물을 피하는 `/cmd_vel`을 10 Hz로 낸다.
+goal(PoseStamped)을 향해 elevation map 위에서 장애물을 피하는 `/cmd_vel`을 10 Hz로 낸다. `/cmd_vel` 발행자는 이 노드뿐이다.
+
+## goal 계약 (순찰·가스·복귀 공통)
+
+`goal_topics` 우선순위 순: `/return_to_home/goal` > `/source_seeking/goal` > `/patrol/goal`. 매 틱 위에서부터 첫 **활성** goal을 따른다.
+
+- 활성 = `header.frame_id`가 비어 있지 않고(`"map"`) 최근 `timeout`(1 s) 안에 수신
+- **비활성은 `frame_id=""`인 `PoseStamped()`를 계속 발행**하거나 발행을 멈추면 된다. 발행자가 죽어도 1 s 뒤 자동으로 다음 순위로 내려간다
+- 활성 goal이 하나도 없으면 정지. 소스가 바뀔 때 로그 1줄
 
 ```bash
 ros2 launch mpc_controller mpc_controller.launch.py planner:=mpc          # 기본
