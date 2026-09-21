@@ -2,6 +2,8 @@
 
 원본 구조가 기대와 다르면 ValueError로 시끄럽게 실패한다(조용히 깨진 모델로 시뮬이 뜨는 것 방지).
 """
+import os
+import tempfile
 import xml.etree.ElementTree as ET
 
 LEGS = ("FL", "FR", "RL", "RR")
@@ -82,3 +84,34 @@ def bridge_entries() -> list:
         }
         for j in JOINTS
     ]
+
+
+def write_legged_assets(
+    sim_share: str, world: str, mu: float = 0.8, p_gain: float = 120.0, d_gain: float = 2.0
+) -> tuple:
+    """변환한 모델·월드·브리지 yaml을 임시 dir에 쓰고 (world_file, bridge_yaml, models_dir)를 돌려준다.
+
+    sim_share는 simulation 패키지 share(또는 소스) 경로. 변환을 먼저 해서 실패하면 임시 dir도 안 남는다.
+    """
+    import yaml  # 런치에서만 필요 — 모듈 import는 stdlib만으로 되게
+
+    def read(*parts: str) -> str:
+        with open(os.path.join(sim_share, *parts), encoding="utf-8") as f:
+            return f.read()
+
+    model_sdf = make_legged_model(read("models", "go2", "model.sdf"), mu, p_gain, d_gain)
+    world_sdf = make_legged_world(read("worlds", f"{world}.sdf"))
+    # ponytail: 실행마다 임시 dir 하나가 남는다(수십 KB). 거슬리면 런치 종료 핸들러에서 삭제
+    out = tempfile.mkdtemp(prefix="go2_legged_")
+    models_dir = os.path.join(out, "models")
+    os.makedirs(os.path.join(models_dir, "go2_legged"))
+    files = {
+        os.path.join(models_dir, "go2_legged", "model.sdf"): model_sdf,
+        os.path.join(models_dir, "go2_legged", "model.config"): MODEL_CONFIG,
+        os.path.join(out, f"{world}.sdf"): world_sdf,
+        os.path.join(out, "bridge.yaml"): yaml.safe_dump(bridge_entries()),
+    }
+    for path, text in files.items():
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    return os.path.join(out, f"{world}.sdf"), os.path.join(out, "bridge.yaml"), models_dir

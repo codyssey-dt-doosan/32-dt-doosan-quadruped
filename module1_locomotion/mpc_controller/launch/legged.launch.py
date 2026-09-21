@@ -4,9 +4,7 @@
 """
 import os
 import sys
-import tempfile
 
-import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
@@ -21,19 +19,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-from mpc_controller.legged_model import MODEL_CONFIG, bridge_entries, make_legged_model, make_legged_world
-
-
-def _read(path: str) -> str:
-    with open(path, encoding="utf-8") as f:
-        return f.read()
-
-
-def _write(path: str, text: str) -> str:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
-    return path
+from mpc_controller.legged_model import write_legged_assets
 
 
 def _launch_setup(context, *args, **kwargs):
@@ -42,15 +28,7 @@ def _launch_setup(context, *args, **kwargs):
     mu, p_gain, d_gain = (float(LaunchConfiguration(k).perform(context)) for k in ("mu", "p_gain", "d_gain"))
 
     sim_share = get_package_share_directory("simulation")
-    # ponytail: 실행마다 임시 dir 하나가 남는다(수십 KB). 거슬리면 런치 종료 핸들러에서 삭제
-    out = tempfile.mkdtemp(prefix="go2_legged_")
-    model_sdf = make_legged_model(_read(os.path.join(sim_share, "models", "go2", "model.sdf")), mu, p_gain, d_gain)
-    _write(os.path.join(out, "models", "go2_legged", "model.sdf"), model_sdf)
-    _write(os.path.join(out, "models", "go2_legged", "model.config"), MODEL_CONFIG)
-    world_file = _write(
-        os.path.join(out, f"{world}.sdf"), make_legged_world(_read(os.path.join(sim_share, "worlds", f"{world}.sdf")))
-    )
-    legged_yaml = _write(os.path.join(out, "bridge.yaml"), yaml.safe_dump(bridge_entries()))
+    world_file, legged_yaml, legged_models = write_legged_assets(sim_share, world, mu, p_gain, d_gain)
 
     # macOS는 서버+GUI 한 프로세스를 지원하지 않음 → full_system과 같은 분리 기동
     split_gui = gui and sys.platform == "darwin"
@@ -85,7 +63,7 @@ def _launch_setup(context, *args, **kwargs):
             {"use_sim_time": True, "force_trot": ParameterValue(LaunchConfiguration("trot"), value_type=bool)}
         ],
     )
-    resource_path = os.pathsep.join([os.path.join(out, "models"), os.path.join(sim_share, "models")])
+    resource_path = os.pathsep.join([legged_models, os.path.join(sim_share, "models")])
     return [SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", resource_path), gz_sim, *gz_gui, *bridges, gait]
 
 

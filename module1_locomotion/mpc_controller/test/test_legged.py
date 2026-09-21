@@ -1,8 +1,11 @@
 import math
+import os
+import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+import yaml
 
 from mpc_controller.gait_node import (
     CALF_MIN,
@@ -24,6 +27,7 @@ from mpc_controller.legged_model import (
     bridge_entries,
     make_legged_model,
     make_legged_world,
+    write_legged_assets,
 )
 
 REPO = Path(__file__).resolve().parents[3]
@@ -167,3 +171,22 @@ def test_foot_x_zero_cases():
     for phase in (0.0, 0.3, 0.7):
         assert foot_x(phase, 0.5, 0.0) == 0.0
         assert foot_x(phase, 1.0, 0.05) == 0.0
+
+
+def test_write_legged_assets_writes_converted_files():
+    world_file, bridge_yaml, models_dir = write_legged_assets(str(REPO / "simulation"), "corridor")
+    try:
+        model = ET.parse(os.path.join(models_dir, "go2_legged", "model.sdf")).getroot().find("model")
+        plugins = [p.get("filename") for p in model.findall("plugin")]
+        assert plugins.count(POS_CTRL) == 12 and VEL_CTRL not in plugins
+        assert os.path.isfile(os.path.join(models_dir, "go2_legged", "model.config"))
+        assert os.path.basename(world_file) == "corridor.sdf"
+        assert Path(world_file).read_text(encoding="utf-8").count("model://go2_legged") == 1
+        assert len(yaml.safe_load(Path(bridge_yaml).read_text(encoding="utf-8"))) == 12
+    finally:
+        shutil.rmtree(os.path.dirname(world_file))
+
+
+def test_write_legged_assets_unknown_world():
+    with pytest.raises(FileNotFoundError):
+        write_legged_assets(str(REPO / "simulation"), "no_such_world")

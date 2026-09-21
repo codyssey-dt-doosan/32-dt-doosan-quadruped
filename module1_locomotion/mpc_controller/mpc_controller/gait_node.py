@@ -93,7 +93,7 @@ class GaitNode(Node):
             for part in ("hip", "thigh", "calf")
         }
         self.create_timer(self.dt, self._tick)
-        self.get_logger().info("gait started (도훈, C안 제자리 trot)")
+        self.get_logger().info("gait started (도훈, C안 trot 보행)")
 
     def _cmd_cb(self, msg: Twist) -> None:
         self.cmd = (msg.linear.x, msg.angular.z)
