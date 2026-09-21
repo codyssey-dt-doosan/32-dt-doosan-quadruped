@@ -4,7 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from mpc_controller.gait_node import CALF_MIN, L1, L2, R_MAX, R_MIN, ik, leg_depth, swing_height
+from mpc_controller.gait_node import (
+    CALF_MIN,
+    L1,
+    L2,
+    R_MAX,
+    R_MIN,
+    SIDE,
+    foot_x,
+    ik,
+    leg_depth,
+    stride_half,
+    swing_height,
+)
 from mpc_controller.legged_model import (
     JOINTS,
     POS_CTRL,
@@ -120,3 +132,38 @@ def test_leg_depth_ramps_from_straight_to_nominal():
     assert leg_depth(0.0, 0.0, 0.25) == R_MAX
     assert leg_depth(1.0, 0.0, 0.25) == 0.25
     assert leg_depth(5.0, 0.04, 0.25) == pytest.approx(0.21)
+
+
+def test_stride_half_straight_is_same_on_both_sides():
+    left = stride_half(0.3, 0.0, SIDE["FL"], 0.25, 0.33, 0.10)
+    right = stride_half(0.3, 0.0, SIDE["FR"], 0.25, 0.33, 0.10)
+    assert left == right == 0.3 * 0.25 / 2
+
+
+def test_stride_half_turn_is_antisymmetric():
+    # w > 0(좌회전): 좌측 발은 반대로, 우측 발은 더 쓸어야 한다
+    left = stride_half(0.0, 0.5, SIDE["RL"], 0.25, 0.33, 0.10)
+    right = stride_half(0.0, 0.5, SIDE["RR"], 0.25, 0.33, 0.10)
+    assert left < 0.0 < right and math.isclose(left, -right)
+
+
+def test_stride_half_reverse_and_clamp():
+    assert stride_half(-0.2, 0.0, 1.0, 0.25, 0.33, 0.10) == -stride_half(0.2, 0.0, 1.0, 0.25, 0.33, 0.10)
+    assert stride_half(5.0, 0.0, 1.0, 0.25, 0.33, 0.10) == 0.10
+    assert stride_half(-5.0, 0.0, 1.0, 0.25, 0.33, 0.10) == -0.10
+
+
+def test_foot_x_sweeps_back_in_stance_and_returns_in_swing():
+    x0 = 0.05
+    assert foot_x(0.0, 0.5, x0) == x0  # 지지 시작: 앞
+    assert math.isclose(foot_x(0.25, 0.5, x0), 0.0, abs_tol=1e-12)
+    assert math.isclose(foot_x(0.5, 0.5, x0), -x0)  # 지지 끝 = 스윙 시작: 뒤
+    assert math.isclose(foot_x(0.75, 0.5, x0), 0.0, abs_tol=1e-12)
+    assert math.isclose(foot_x(0.999999, 0.5, x0), x0, abs_tol=1e-6)  # 주기 경계 연속
+    assert math.isclose(foot_x(0.4999, 0.5, x0), -x0, abs_tol=1e-3)  # 지지→스윙 경계 연속
+
+
+def test_foot_x_zero_cases():
+    for phase in (0.0, 0.3, 0.7):
+        assert foot_x(phase, 0.5, 0.0) == 0.0
+        assert foot_x(phase, 1.0, 0.05) == 0.0
