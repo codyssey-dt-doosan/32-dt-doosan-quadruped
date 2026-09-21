@@ -26,12 +26,33 @@ def _launch_setup(context, *args, **kwargs):
     map_resolution = LaunchConfiguration("map_resolution").perform(context)
     map_size = LaunchConfiguration("map_size").perform(context)
     leg_animation = LaunchConfiguration("leg_animation").perform(context)
+    locomotion = LaunchConfiguration("locomotion").perform(context)
 
     sim_share = get_package_share_directory("simulation")
     world_file = os.path.join(sim_share, "worlds", f"{world}.sdf")
     bridge_yaml = os.path.join(sim_share, "config", "ros_gz_bridge.yaml")
     urdf_file = os.path.join(sim_share, "urdf", "go2.urdf")
     models_path = os.path.join(sim_share, "models")
+
+    # 다리 구동 go2(C안, 옵트인): go2 모델·월드를 변환한 임시본으로 바꾸고 관절 명령 브리지를 하나 더 띄운다.
+    # 기본(velocity)은 아래를 전혀 타지 않는다 — mpc_controller import도 이 분기 안에서만.
+    legged_bridge = []
+    if locomotion == "legged":
+        from mpc_controller.legged_model import write_legged_assets
+
+        world_file, legged_yaml, legged_models = write_legged_assets(sim_share, world)
+        models_path = os.pathsep.join([legged_models, models_path])
+        legged_bridge = [
+            Node(
+                package="ros_gz_bridge",
+                executable="parameter_bridge",
+                name="bridge_legged",
+                parameters=[{"config_file": legged_yaml}],
+                output="screen",
+            )
+        ]
+    elif locomotion != "velocity":
+        raise ValueError(f"locomotion은 velocity | legged (받은 값: {locomotion})")
 
     # macOS는 서버+GUI 한 프로세스(gz sim world.sdf)를 지원하지 않음 → 서버(-s)와 GUI(-g)를 따로 띄운다
     split_gui = gui and sys.platform == "darwin"
@@ -77,6 +98,7 @@ def _launch_setup(context, *args, **kwargs):
                 "map_resolution": map_resolution,
                 "map_size": map_size,
                 "leg_animation": leg_animation,
+                "locomotion": locomotion,
             }.items(),
         )
         for pkg, launch_file in (
@@ -97,6 +119,7 @@ def _launch_setup(context, *args, **kwargs):
         gz_sim,
         *gz_gui,
         bridge,
+        *legged_bridge,
         robot_state_publisher,
         *module_launches,
     ]
@@ -134,6 +157,11 @@ def generate_launch_description() -> LaunchDescription:
                 "leg_animation",
                 default_value="true",
                 description="다리 애니메이션(시각 효과) 사용 여부",
+            ),
+            DeclareLaunchArgument(
+                "locomotion",
+                default_value="velocity",
+                description="구동 방식: velocity(몸체 속도 직접, 기본) | legged(다리 구동 trot, C안)",
             ),
             OpaqueFunction(function=_launch_setup),
         ]
