@@ -46,11 +46,12 @@ heading_scan(참조 헤딩으로 mpc도 사용): `lookahead` 1.5 · `scan_max_de
 
 ## 다리 구동 go2 — trot 보행 (`legged.launch.py`, 옵트인)
 
-CoM·접지력 MPC(C안)로 가는 첫 단계. **기본 구동과 별개**: `full_system.launch.py`는 그대로 VelocityControl + mpc이고, 이 런치는 다리로 서는 go2만 띄우고 `/cmd_vel` (v, w)를 다리로 따라간다. `full_system` 통합은 아직 — 순찰 불가.
+CoM·접지력 MPC(C안)로 가는 첫 단계. **기본 구동과 별개**: `full_system.launch.py`는 그대로 VelocityControl + mpc이고, 이 런치는 다리로 서는 go2만 띄우고 `/cmd_vel` (v, w)를 다리로 따라간다. 전체 스택과 같이 띄우려면 `full_system.launch.py locomotion:=legged` — 월드·모델만 변환본으로 바뀌고 elevation_map·mpc·patrol·fall_recovery는 수정 없이 그대로 돈다(corridor 195.0 s·factory 197.6 s 완주·막힘 0, 기본 구동 대비 약 +15%. 강제 전도 회복 2.4 s). 기본값 `velocity`는 현행 그대로.
 
 ```bash
 ros2 launch mpc_controller legged.launch.py                        # 기립, /cmd_vel (v, w)를 trot으로 추종
 ros2 launch mpc_controller legged.launch.py gui:=false trot:=true  # 헤드리스, /cmd_vel 없이도 제자리 trot
+ros2 launch simulation full_system.launch.py locomotion:=legged    # 전체 스택을 다리 구동으로(순찰)
 ```
 
 - 모델은 복사본이 아니라 **런치 시 `simulation/models/go2/model.sdf`를 변환**(`legged_model.py`): VelocityControl 제거, 관절별 `JointPositionController` 12개, 다리 마찰 `mu`, 관절 스프링 제거. 원본 구조가 바뀌면 `legged 변환 실패[…]`로 런치가 멈춘다 → 메시지의 단계를 보고 `legged_model.py`를 맞출 것.
