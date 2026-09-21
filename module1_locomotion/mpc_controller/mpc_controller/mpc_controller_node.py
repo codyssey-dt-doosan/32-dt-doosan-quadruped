@@ -41,8 +41,12 @@ def pick_heading(
     obstacle_h: float,
     scan_max: float,
     scan_step: float,
+    prev: float | None = None,
+    hysteresis: float = 0.0,
 ) -> float | None:
     """로봇 프레임 헤딩(rad) 반환. goal_rel에 가까운 순서로 후보 검사, 전부 막히면 None.
+    prev(직전 선택 헤딩, 로봇 프레임)가 여전히 자유이고 goal 오차가 최적 후보보다 hysteresis 이상 나쁘지 않으면 prev 유지
+    (좌/우 동률 후보가 틱마다 번갈아 뽑히는 채터링 방지). hysteresis 0이면 기존 동작.
 
     후보 = goal_rel + [0, +step, -step, +2step, -2step, ...] (|offset| <= scan_max).
     후보 h가 막힘 = 그리드 셀 중 (값이 NaN 아니고) 값 > obstacle_h 이고
@@ -56,12 +60,19 @@ def pick_heading(
     occ = ~np.isnan(grid) & (grid > obstacle_h)
     cx_occ, cy_occ = cx[occ], cy[occ]
 
-    for off in scan_offsets(scan_max, scan_step):
-        h = wrap_angle(goal_rel + off)
+    def blocked(h: float) -> bool:
         along = cx_occ * math.cos(h) + cy_occ * math.sin(h)
         lateral = -cx_occ * math.sin(h) + cy_occ * math.cos(h)
-        blocked = np.any((along >= 0) & (along <= lookahead) & (np.abs(lateral) <= half_width))
-        if not blocked:
+        return bool(np.any((along >= 0) & (along <= lookahead) & (np.abs(lateral) <= half_width)))
+
+    for off in scan_offsets(scan_max, scan_step):
+        h = wrap_angle(goal_rel + off)
+        if not blocked(h):
+            if prev is not None:
+                prev_off = abs(wrap_angle(prev - goal_rel))
+                # 1e-9: 동률·hysteresis 0이면 새 후보(기존 동작)
+                if prev_off <= scan_max and prev_off + 1e-9 < abs(off) + hysteresis and not blocked(prev):
+                    return prev
             return h
     return None
 
@@ -213,6 +224,7 @@ class MpcControllerNode(Node):
         self.declare_parameter("obstacle_h", 0.15)
         self.declare_parameter("scan_max_deg", 60.0)
         self.declare_parameter("scan_step_deg", 10.0)
+        self.declare_parameter("hysteresis_deg", 15.0)  # 직전 헤딩이 이만큼 이상 나쁘지 않으면 유지(채터링 방지)
         self.declare_parameter("timeout", 1.0)
         self.declare_parameter("fall_timeout", 2.0)  # status 2 Hz. fall_recovery 죽으면 이 시간 후 주행 복귀
         self.declare_parameter("planner", "mpc")  # mpc | heading_scan
@@ -233,6 +245,7 @@ class MpcControllerNode(Node):
         self.grid: np.ndarray | None = None
         self.grid_time = None
         self._blocked = False
+        self._prev_h_world: float | None = None  # 직전 선택 헤딩(월드 프레임, 히스테리시스용)
         self._grid_warned = False
         self._plan_ms_sum = 0.0
         self._plan_ms_max = 0.0
@@ -319,6 +332,7 @@ class MpcControllerNode(Node):
         obstacle_h = self.get_parameter("obstacle_h").value
         scan_max = math.radians(self.get_parameter("scan_max_deg").value)
         scan_step = math.radians(self.get_parameter("scan_step_deg").value)
+        hysteresis = math.radians(self.get_parameter("hysteresis_deg").value)
         v_max = self.get_parameter("v_max").value
         w_max = self.get_parameter("w_max").value
         k_ang = self.get_parameter("k_ang").value
@@ -336,10 +350,13 @@ class MpcControllerNode(Node):
 
         planner = self.get_parameter("planner").value
         t0 = time.perf_counter()
+        prev = None if self._prev_h_world is None else wrap_angle(self._prev_h_world - yaw)
+        h = pick_heading(
+            self.grid, goal_rel, resolution, size, lookahead, half_width, obstacle_h, scan_max, scan_step,
+            prev=prev, hysteresis=hysteresis,
+        )
+        self._prev_h_world = None if h is None else yaw + h
         if planner == "mpc":
-            h = pick_heading(
-                self.grid, goal_rel, resolution, size, lookahead, half_width, obstacle_h, scan_max, scan_step
-            )
             if dist < stop_dist:
                 res: tuple[float, float] | None = (0.0, 0.0)
             elif h is None:
@@ -363,9 +380,6 @@ class MpcControllerNode(Node):
             blocked = res is None
             v, w = blocked_cmd(goal_rel, w_max) if blocked else res  # 막히면 제자리에서 goal 쪽으로 선회
         else:
-            h = pick_heading(
-                self.grid, goal_rel, resolution, size, lookahead, half_width, obstacle_h, scan_max, scan_step
-            )
             blocked = h is None
             v, w = blocked_cmd(goal_rel, w_max) if blocked else goal_to_cmd(dist, h, v_max, w_max, k_ang, stop_dist)
         ms = (time.perf_counter() - t0) * 1e3

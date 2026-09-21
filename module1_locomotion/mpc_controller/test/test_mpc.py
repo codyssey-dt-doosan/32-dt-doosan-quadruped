@@ -323,3 +323,25 @@ def test_pick_goal_index_priority_and_activity():
     assert pick_goal_index(["map", "", "map"], [5.0, 0.1, 0.1], 1.0) == 2  # 상위가 stale이면 다음
     assert pick_goal_index(["", "", ""], [0.1, 0.1, 0.1], 1.0) is None
     assert pick_goal_index([None, None], [None, None], 1.0) is None
+
+
+def _center_block_grid():
+    """전방 0.5~0.9 m, 좌우 ±0.3 m 벽. goal 정면이면 0° 막히고 ±10°는 동률 후보."""
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    cx, cy = _cell_centers()
+    grid[(cx > 0.5) & (cx < 0.9) & (np.abs(cy) < 0.3)] = 0.65
+    return grid
+
+
+def test_pick_heading_hysteresis_keeps_prev():
+    grid = _center_block_grid()
+    best = pick_heading(grid, 0.0, **COMMON)
+    assert best is not None and best > 0  # 스캔 순서상 +10° 먼저
+    prev = -best  # 직전 틱은 -10°를 골랐다
+    hyst = math.radians(15.0)
+    assert pick_heading(grid, 0.0, **COMMON, prev=prev, hysteresis=hyst) == prev  # 동률이면 유지
+    assert pick_heading(grid, 0.0, **COMMON, prev=prev, hysteresis=0.0) == best  # 0이면 기존 동작
+    # prev가 막히면 무시
+    assert pick_heading(grid, 0.0, **COMMON, prev=0.0, hysteresis=hyst) == best
+    # goal이 크게 돌면(prev가 hysteresis 이상 나쁨) 새 후보
+    assert pick_heading(grid, math.radians(40), **COMMON, prev=prev, hysteresis=hyst) != prev
