@@ -21,7 +21,7 @@ ros2 launch mpc_controller mpc_controller.launch.py planner:=heading_scan # 폴�
 
 | `planner` | 방식 |
 |-----------|------|
-| `mpc` (기본) | 헤딩 스캔이 준 자유 헤딩 방향 `min(dist, lookahead)` 지점을 참조 goal로 삼는 샘플링 MPC. 유니사이클 지평 `horizon`×`dt`(10×0.2 s), 입력 (v,w)를 앞·뒤 2구간으로 나눠 (3×`n_w`)² = 729 시퀀스 롤아웃. 발자국 반경(`half_width`)만큼 팽창한 점유 셀에 닿는 시퀀스와 정지 시퀀스 제외. 비용 = 지평 goal 거리 평균 + `w_head`·\|종단 heading 오차\| + `w_turn`·Σ\|w\|dt. 최소 비용 시퀀스의 첫 (v,w) 실행, 매 틱 재계획 |
+| `mpc` (기본) | 헤딩 스캔이 준 자유 헤딩 방향 `min(dist, lookahead)` 지점을 참조 goal로 삼는 샘플링 MPC. 유니사이클 지평 `horizon`×`dt`(10×0.2 s), 입력 (v,w)를 앞·뒤 2구간으로 나눠 (3×`n_w`)² = 729 시퀀스 롤아웃. 원본 장애물 셀에 닿거나 발자국 반경(`half_width`) **원판** 팽창 셀에 **새로 진입**하는 시퀀스와 정지 시퀀스 제외(시작이 이미 팽창 안이면 나가는 건 허용 — 정사각 팽창·전면 금지였을 때 0.9 m 통로가 닫혀 제자리 회전에 갇혔음, 2026-09-21). 비용 = 지평 goal 거리 평균 + `w_head`·\|종단 heading 오차\| + `w_turn`·Σ\|w\|dt. 최소 비용 시퀀스의 첫 (v,w) 실행, 매 틱 재계획 |
 | `heading_scan` | goal 방향 ±`scan_max_deg` 후보를 `scan_step_deg` 간격으로, 전방 `lookahead`×±`half_width` 통로가 비는 첫 헤딩 선택. 지평 1스텝 |
 
 둘 다 전부 막히면 goal 쪽으로 제자리 선회(`blocked_cmd`). `dist < stop_dist`면 정지.

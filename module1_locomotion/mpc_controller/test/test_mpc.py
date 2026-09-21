@@ -168,19 +168,21 @@ def test_scan_offsets_float_boundary():
     assert offs[0] == 0.0 and offs[1] > 0 and offs[2] < 0  # goal 가까운 순, +먼저
 
 
-def test_inflate_square_window():
+def test_inflate_disk():
     occ = np.zeros((20, 20), dtype=bool)
     occ[10, 10] = True
     out = inflate(occ, 2)
-    assert out.sum() == 25
-    assert out[8:13, 8:13].all()
-    assert not out[7, 10] and not out[13, 10]
+    assert out.sum() == 13  # 반경 2 원판: 축 ±2, 대각 ±1
+    assert out[8, 10] and out[12, 10] and out[11, 11]
+    assert not out[8, 8] and not out[12, 12]  # 정사각 창이면 포함됐을 대각 모서리
+    assert not out[7, 10]
+    assert inflate(occ, 3.5).sum() == 37  # 실사용 0.35/0.1
 
 
 def test_inflate_edge_and_zero():
     occ = np.zeros((5, 5), dtype=bool)
     occ[0, 0] = True
-    assert inflate(occ, 1).sum() == 4
+    assert inflate(occ, 1).sum() == 3  # 원판 반경 1: 자기+오른쪽+아래(대각 제외)
     same = inflate(occ, 0)
     assert same.sum() == 1 and same is not occ
 
@@ -298,9 +300,7 @@ def test_plan_mpc_pocket_regression_with_reference_heading():
     for r, c in POCKET_OCC:
         grid[r, c] = 0.65
     dist, goal_rel = 15.12, 0.018
-    # 실제 goal을 그대로 주면 포켓에서 회전만 나온다(원인 기록)
-    v0, w0 = plan_mpc(grid, (dist * math.cos(goal_rel), dist * math.sin(goal_rel)), **MPC)
-    assert v0 == 0.0 and abs(w0) == 1.0
+    # 실제 goal을 그대로 주면 포켓에서 회전만 나왔음(당시 정사각 팽창 기준 원인 기록. 원판 팽창 후엔 전진 후보가 생겨 단언 안 함)
     # 헤딩 스캔 참조(−59°)를 가상 goal로 주면 자유 방향으로 일관되게 회전해 탈출
     h = pick_heading(grid, goal_rel, **COMMON)
     assert h is not None and h < math.radians(-40)
@@ -354,3 +354,30 @@ def test_plan_mpc_reverse_only_when_enabled():
     assert v >= 0.0  # 기본 v_min 0 → 후진 후보 없음
     v, w = plan_mpc(grid, behind, **{**MPC, "w_head": 0.0, "v_min": -0.25})
     assert v == -0.25 and w == 0.0  # heading 항 없으면 직진 후진이 거리 평균 최소
+
+
+def test_plan_mpc_escapes_inflated_start():
+    # 장애물 셀이 좌측 0.3 m(발자국 0.35 m 안) → 시작 셀이 팽창 점유. 전방은 비어 있음.
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    grid[23, 20] = 0.65
+    res = plan_mpc(grid, (1.5, 0.0), **MPC)
+    assert res is not None and res[0] > 0  # 나가는 건 허용해야지, 제자리 회전(None)이면 영구 갇힘
+
+
+# 2026-09-21 corridor n_w 13 덤프 tick 553: 장애물 박스와 벽 사이, 원본 장애물까지 0.47 m인데 팽창(체비쇼프 4셀)에 갇혀 174틱 None
+INFLATED_TRAP_OCC = [
+    (11, 21), (12, 21), (13, 21), (14, 21), (14, 22), (14, 23), (14, 24), (14, 25), (14, 26), (14, 27), (15, 21),
+    (15, 22), (23, 33), (23, 34), (23, 35), (23, 36), (23, 38), (23, 39), (24, 26), (24, 27), (24, 28), (24, 29),
+    (24, 30), (24, 31), (24, 32), (25, 19), (25, 20), (25, 21), (25, 22), (25, 23), (25, 24), (25, 25), (25, 26),
+    (25, 27), (26, 12), (26, 13), (26, 14), (26, 15), (26, 16), (26, 17), (26, 18), (26, 19), (27, 6), (27, 7),
+    (27, 8), (27, 9), (27, 10), (27, 11), (27, 12), (28, 0), (28, 1), (28, 2), (28, 3), (28, 4), (28, 5),
+]
+
+
+def test_plan_mpc_inflated_trap_regression():
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    for r, c in INFLATED_TRAP_OCC:
+        grid[r, c] = 0.65
+    assert not inflate(~np.isnan(grid) & (grid > 0.15), 3.5)[N // 2, N // 2]  # 원판 팽창이면 시작 셀은 자유(전제)
+    res = plan_mpc(grid, (1.464, -0.326), **{**MPC, "n_w": 13})
+    assert res is not None and res[0] > 0

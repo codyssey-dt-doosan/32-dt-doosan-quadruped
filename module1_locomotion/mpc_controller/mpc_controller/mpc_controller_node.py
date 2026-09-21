@@ -118,17 +118,20 @@ def halt_for_fall(status: str | None) -> bool:
     return status in HALT_STATES
 
 
-def inflate(occ: np.ndarray, cells: int) -> np.ndarray:
-    """bool 점유 그리드를 체비쇼프 반경 cells(정사각 창)만큼 팽창. 발자국 반경 보정용."""
-    if cells <= 0:
+def inflate(occ: np.ndarray, radius: float) -> np.ndarray:
+    """bool 점유 그리드를 유클리드 반경 radius(셀 단위, 원판)만큼 팽창. 발자국 반경 보정용.
+    정사각 창(체비쇼프)이면 대각선이 radius·√2까지 미쳐 0.9 m 통로를 닫았음(2026-09-21 corridor 실측)."""
+    if radius <= 0:
         return occ.copy()
+    cells = int(math.ceil(radius))
     n = occ.shape[0]
     pad = np.zeros((n + 2 * cells, n + 2 * cells), dtype=bool)
     pad[cells : cells + n, cells : cells + n] = occ
     out = np.zeros_like(occ, dtype=bool)
     for di in range(-cells, cells + 1):
         for dj in range(-cells, cells + 1):
-            out |= pad[cells + di : cells + di + n, cells + dj : cells + dj + n]
+            if di * di + dj * dj <= radius * radius:
+                out |= pad[cells + di : cells + di + n, cells + dj : cells + dj + n]
     return out
 
 
@@ -169,10 +172,11 @@ def plan_mpc(
 ) -> tuple[float, float] | None:
     """로봇 프레임 goal_xy로 가는 (v, w) 첫 명령. 유니사이클 지평 horizon×dt, 2구간 (v,w) 샘플링.
     v 후보 {0, v_max/2, v_max} + (v_min < 0이면 후진 v_min). 기본 후진 없음 — 포켓 갇힘 재발 시 v_min=-0.25.
-    충돌 = 발자국 반경(half_width) 팽창 점유 셀 위 포즈. 정지 시퀀스 제외. 유효 시퀀스 없으면 None.
+    충돌 = 원본 장애물 셀 위 포즈, 또는 발자국 반경(half_width) 원판 팽창 셀에 새로 진입. 정지 시퀀스 제외. 유효 시퀀스 없으면 None.
     비용 = 지평 goal 거리 평균 + w_head·|종단 heading 오차| + w_turn·Σ|w|dt."""
     n = grid.shape[0]
-    occ = inflate(~np.isnan(grid) & (grid > obstacle_h), int(math.ceil(half_width / resolution)))
+    raw = ~np.isnan(grid) & (grid > obstacle_h)
+    occ = inflate(raw, half_width / resolution)
 
     vs = np.array([0.0, v_max / 2, v_max] + ([v_min] if v_min < 0 else []))
     ws = np.linspace(-w_max, w_max, n_w)
@@ -190,10 +194,18 @@ def plan_mpc(
     col = np.floor((x + size / 2) / resolution).astype(int)
     row = np.floor((y + size / 2) / resolution).astype(int)
     inside = (col >= 0) & (col < n) & (row >= 0) & (row < n)
+    hit_raw = np.zeros(x.shape, dtype=bool)
+    hit_raw[inside] = raw[row[inside], col[inside]]
     hit = np.zeros(x.shape, dtype=bool)
     hit[inside] = occ[row[inside], col[inside]]
+    # 원본 장애물 셀은 항상 충돌. 팽창 셀은 '진입'만 금지 — 시작이 이미 팽창 안이면 나가는 시퀀스를 허용해야
+    # 제자리 회전(None)으로 영구 갇히지 않음
+    c0 = int(size / 2 / resolution)
+    start_in = bool(occ[c0, c0]) if 0 <= c0 < n else False
+    prev_hit = np.concatenate([np.full((hit.shape[0], 1), start_in), hit[:, :-1]], axis=1)
+    entering = hit & ~prev_hit
     stationary = (cand[i1, 0] == 0.0) & (cand[i2, 0] == 0.0)
-    valid = ~hit.any(axis=1) & ~stationary
+    valid = ~hit_raw.any(axis=1) & ~entering.any(axis=1) & ~stationary
     if not valid.any():
         return None
 
