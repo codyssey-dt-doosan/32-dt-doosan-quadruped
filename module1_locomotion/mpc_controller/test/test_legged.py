@@ -1,8 +1,10 @@
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
 
+from mpc_controller.gait_node import CALF_MIN, L1, L2, R_MAX, R_MIN, ik, leg_depth, swing_height
 from mpc_controller.legged_model import (
     JOINTS,
     POS_CTRL,
@@ -78,3 +80,43 @@ def test_bridge_entries_cover_all_joints():
     assert [e["ros_topic_name"] for e in entries] == [f"/legged/{j}" for j in JOINTS]
     assert all(e["gz_topic_name"] == f"/model/go2{e['ros_topic_name']}" for e in entries)
     assert all(e["direction"] == "ROS_TO_GZ" and e["gz_type_name"] == "gz.msgs.Double" for e in entries)
+
+
+def fk(thigh: float, calf: float) -> tuple:
+    """순기구학: thigh 축 기준 발끝 (앞 +x, 아래 d). thigh 양수 = 다리 뒤로."""
+    shank = thigh + calf
+    return -(L1 * math.sin(thigh) + L2 * math.sin(shank)), L1 * math.cos(thigh) + L2 * math.cos(shank)
+
+
+def test_ik_matches_spike_postures():
+    thigh, calf = ik(0.0, 0.2242)  # 기립 스파이크 자세
+    assert abs(thigh - 0.45) < 0.01 and abs(calf + 1.35) < 0.01
+    thigh, calf = ik(0.0, 0.25)  # trot 명목 자세
+    assert abs(thigh - 0.338) < 0.005 and abs(calf + 0.978) < 0.005
+
+
+def test_ik_round_trips_through_fk():
+    for x in (-0.05, 0.0, 0.06):
+        for d in (0.21, 0.25, 0.27):
+            fx, fd = fk(*ik(x, d))
+            assert math.isclose(fx, x, abs_tol=1e-9) and math.isclose(fd, d, abs_tol=1e-9)
+
+
+def test_ik_clamps_instead_of_raising():
+    for x, d in ((0.0, 0.05), (0.0, 0.0), (0.0, 0.5), (0.3, 0.3)):
+        thigh, calf = ik(x, d)
+        assert CALF_MIN <= calf <= 0.0
+        assert R_MIN - 1e-9 <= math.hypot(*fk(thigh, calf)) <= R_MAX + 1e-9
+
+
+def test_swing_height_profile():
+    assert swing_height(0.0, 0.5, 0.04) == 0.0 and swing_height(0.49, 0.5, 0.04) == 0.0  # 지지
+    assert math.isclose(swing_height(0.75, 0.5, 0.04), 0.04)  # 스윙 중앙
+    assert swing_height(0.5, 0.5, 0.04) < 1e-9 and swing_height(0.999, 0.5, 0.04) < 1e-3  # 경계 연속
+    assert swing_height(0.9, 1.0, 0.04) == 0.0  # duty 1 = 항상 지지
+
+
+def test_leg_depth_ramps_from_straight_to_nominal():
+    assert leg_depth(0.0, 0.0, 0.25) == R_MAX
+    assert leg_depth(1.0, 0.0, 0.25) == 0.25
+    assert leg_depth(5.0, 0.04, 0.25) == pytest.approx(0.21)
