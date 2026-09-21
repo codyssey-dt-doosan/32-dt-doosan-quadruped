@@ -16,6 +16,45 @@
     <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
       <topic>/model/go2/joint_state</topic>
     </plugin>
+    <!-- hip은 0 고정(토픽 발행 없음 → 기본 목표 0). 스프링만으로는 접지 하중에 10° 벌어짐 -->
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+      <joint_name>FL_hip_joint</joint_name>
+      <joint_name>FR_hip_joint</joint_name>
+      <joint_name>RL_hip_joint</joint_name>
+      <joint_name>RR_hip_joint</joint_name>
+      <topic>/model/go2/leg/hip</topic>
+      <p_gain>120</p_gain><i_gain>0</i_gain><d_gain>2.0</d_gain>
+      <cmd_max>30</cmd_max><cmd_min>-30</cmd_min>
+    </plugin>
+    <!-- 다리 애니메이션(시각 효과): 대각 쌍 A(FL·RR)·B(FR·RL)가 목표를 공유. leg_animation_node가 발행 -->
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+      <joint_name>FL_thigh_joint</joint_name>
+      <joint_name>RR_thigh_joint</joint_name>
+      <topic>/model/go2/leg/thigh_a</topic>
+      <p_gain>60</p_gain><i_gain>0</i_gain><d_gain>1.0</d_gain>
+      <cmd_max>30</cmd_max><cmd_min>-30</cmd_min>
+    </plugin>
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+      <joint_name>FR_thigh_joint</joint_name>
+      <joint_name>RL_thigh_joint</joint_name>
+      <topic>/model/go2/leg/thigh_b</topic>
+      <p_gain>60</p_gain><i_gain>0</i_gain><d_gain>1.0</d_gain>
+      <cmd_max>30</cmd_max><cmd_min>-30</cmd_min>
+    </plugin>
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+      <joint_name>FL_calf_joint</joint_name>
+      <joint_name>RR_calf_joint</joint_name>
+      <topic>/model/go2/leg/calf_a</topic>
+      <p_gain>60</p_gain><i_gain>0</i_gain><d_gain>1.0</d_gain>
+      <cmd_max>30</cmd_max><cmd_min>-30</cmd_min>
+    </plugin>
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+      <joint_name>FR_calf_joint</joint_name>
+      <joint_name>RL_calf_joint</joint_name>
+      <topic>/model/go2/leg/calf_b</topic>
+      <p_gain>60</p_gain><i_gain>0</i_gain><d_gain>1.0</d_gain>
+      <cmd_max>30</cmd_max><cmd_min>-30</cmd_min>
+    </plugin>
 
     <link name="base_link">
       <inertial>

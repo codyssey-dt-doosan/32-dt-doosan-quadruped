@@ -23,6 +23,7 @@ def _launch_setup(context, *args, **kwargs):
     planner = LaunchConfiguration("planner").perform(context)
     map_resolution = LaunchConfiguration("map_resolution").perform(context)
     map_size = LaunchConfiguration("map_size").perform(context)
+    leg_animation = LaunchConfiguration("leg_animation").perform(context)
 
     sim_share = get_package_share_directory("simulation")
     world_file = os.path.join(sim_share, "worlds", f"{world}.sdf")
@@ -70,6 +71,7 @@ def _launch_setup(context, *args, **kwargs):
                 "planner": planner,
                 "map_resolution": map_resolution,
                 "map_size": map_size,
+                "leg_animation": leg_animation,
             }.items(),
         )
         for pkg, launch_file in (
@@ -121,6 +123,11 @@ def generate_launch_description() -> LaunchDescription:
                 "map_size",
                 default_value="4.0",
                 description="elevation_map·mpc_controller 공용 그리드 한 변(m)",
+            ),
+            DeclareLaunchArgument(
+                "leg_animation",
+                default_value="true",
+                description="다리 애니메이션(시각 효과) 사용 여부",
             ),
             OpaqueFunction(function=_launch_setup),
         ]

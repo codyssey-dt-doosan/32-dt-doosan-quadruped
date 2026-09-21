@@ -38,6 +38,12 @@ goal·odom·elevation_map 중 하나라도 `timeout`(1 s) 미수신 → 0. `/fal
 mpc: `horizon` 10 · `dt` 0.2 · `n_w` 9 · `w_turn` 0.1 · `w_head` 0.5 · `v_min` 0.0(<0이면 후진 후보 추가, 예 -0.25. 포켓 갇힘 재발 시)
 heading_scan(참조 헤딩으로 mpc도 사용): `lookahead` 1.5 · `scan_max_deg` 60 · `scan_step_deg` 10 · `hysteresis_deg` 15(직전 헤딩이 자유이고 goal 오차가 최적 후보보다 이만큼 이상 나쁘지 않으면 유지, 좌/우 채터링 방지) · `k_ang` 1.5(heading_scan 전용)
 
+## 다리 애니메이션 (`leg_animation_node`)
+
+시각 효과 전용. 몸체 이동은 VelocityControl이 하고 다리는 추진에 기여하지 않는다. `/cmd_vel` 속도(`|v| + turn_weight·|w|`)에 비례한 트롯 사인파를 50 Hz로 발행 → `model.sdf`의 `JointPositionController` 4개(대각 쌍 A=FL·RR, B=FR·RL × thigh/calf)가 추종. hip 관절은 스프링에 둠. 토픽 `/leg_animation/{thigh,calf}_{a,b}`(Float64). 끄기: 런치 인자 `leg_animation:=false`.
+
+파라미터: `amp_thigh` 0.3 · `amp_calf` 0.5 · `stride_hz_per_mps` 4.0 · `stride_hz_max` 2.5 · `speed_full` 0.15 · `turn_weight` 0.3 · `cmd_timeout` 0.5
+
 ## 테스트·실험
 
 ```bash

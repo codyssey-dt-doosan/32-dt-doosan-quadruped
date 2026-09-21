@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "mpc_controller_node = mpc_controller.mpc_controller_node:main",
+            "leg_animation_node = mpc_controller.leg_animation_node:main",
         ],
     },
 )
