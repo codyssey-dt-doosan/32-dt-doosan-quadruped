@@ -165,14 +165,16 @@ def plan_mpc(
     n_w: int,
     w_turn: float,
     w_head: float = 0.5,
+    v_min: float = 0.0,
 ) -> tuple[float, float] | None:
     """로봇 프레임 goal_xy로 가는 (v, w) 첫 명령. 유니사이클 지평 horizon×dt, 2구간 (v,w) 샘플링.
+    v 후보 {0, v_max/2, v_max} + (v_min < 0이면 후진 v_min). 기본 후진 없음 — 포켓 갇힘 재발 시 v_min=-0.25.
     충돌 = 발자국 반경(half_width) 팽창 점유 셀 위 포즈. 정지 시퀀스 제외. 유효 시퀀스 없으면 None.
     비용 = 지평 goal 거리 평균 + w_head·|종단 heading 오차| + w_turn·Σ|w|dt."""
     n = grid.shape[0]
     occ = inflate(~np.isnan(grid) & (grid > obstacle_h), int(math.ceil(half_width / resolution)))
 
-    vs = np.array([0.0, v_max / 2, v_max])
+    vs = np.array([0.0, v_max / 2, v_max] + ([v_min] if v_min < 0 else []))
     ws = np.linspace(-w_max, w_max, n_w)
     V, W = np.meshgrid(vs, ws, indexing="ij")
     cand = np.stack([V.ravel(), W.ravel()], axis=1)  # (m, 2)
@@ -233,6 +235,7 @@ class MpcControllerNode(Node):
         self.declare_parameter("n_w", 9)
         self.declare_parameter("w_turn", 0.1)
         self.declare_parameter("w_head", 0.5)
+        self.declare_parameter("v_min", 0.0)  # <0이면 후진 후보 추가(예 -0.25). 기본 끔
         self.declare_parameter("resolution", 0.1)  # full_system map_resolution/map_size가 elevation_map과 같이 넘김
         self.declare_parameter("size", 4.0)
 
@@ -376,6 +379,7 @@ class MpcControllerNode(Node):
                     n_w=self.get_parameter("n_w").value,
                     w_turn=self.get_parameter("w_turn").value,
                     w_head=self.get_parameter("w_head").value,
+                    v_min=self.get_parameter("v_min").value,
                 )
             blocked = res is None
             v, w = blocked_cmd(goal_rel, w_max) if blocked else res  # 막히면 제자리에서 goal 쪽으로 선회

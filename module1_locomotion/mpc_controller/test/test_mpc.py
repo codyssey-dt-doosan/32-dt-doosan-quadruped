@@ -345,3 +345,12 @@ def test_pick_heading_hysteresis_keeps_prev():
     assert pick_heading(grid, 0.0, **COMMON, prev=0.0, hysteresis=hyst) == best
     # goal이 크게 돌면(prev가 hysteresis 이상 나쁨) 새 후보
     assert pick_heading(grid, math.radians(40), **COMMON, prev=prev, hysteresis=hyst) != prev
+
+
+def test_plan_mpc_reverse_only_when_enabled():
+    grid = np.full((N, N), np.nan, dtype=np.float32)
+    behind = (-1.5, 0.0)
+    v, _ = plan_mpc(grid, behind, **{**MPC, "w_head": 0.0})
+    assert v >= 0.0  # 기본 v_min 0 → 후진 후보 없음
+    v, w = plan_mpc(grid, behind, **{**MPC, "w_head": 0.0, "v_min": -0.25})
+    assert v == -0.25 and w == 0.0  # heading 항 없으면 직진 후진이 거리 평균 최소

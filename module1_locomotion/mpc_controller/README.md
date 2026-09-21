@@ -35,7 +35,7 @@ goal·odom·elevation_map 중 하나라도 `timeout`(1 s) 미수신 → 0. `/fal
 공통: `v_max` 0.5 · `w_max` 1.0 · `stop_dist` 0.3 · `half_width` 0.35 · `obstacle_h` 0.15 · `resolution` 0.1 · `size` 4.0 · `timeout` 1.0 · `fall_timeout` 2.0
 
 `resolution`/`size`는 elevation_map과 같아야 한다. 런치 인자 `map_resolution`/`map_size`(full_system 포함)가 두 노드에 같이 넘기므로 노드 파라미터를 따로 바꾸지 말 것. 셀 수가 안 맞으면 error 로그 후 그리드를 버려 timeout 정지.
-mpc: `horizon` 10 · `dt` 0.2 · `n_w` 9 · `w_turn` 0.1 · `w_head` 0.5
+mpc: `horizon` 10 · `dt` 0.2 · `n_w` 9 · `w_turn` 0.1 · `w_head` 0.5 · `v_min` 0.0(<0이면 후진 후보 추가, 예 -0.25. 포켓 갇힘 재발 시)
 heading_scan(참조 헤딩으로 mpc도 사용): `lookahead` 1.5 · `scan_max_deg` 60 · `scan_step_deg` 10 · `hysteresis_deg` 15(직전 헤딩이 자유이고 goal 오차가 최적 후보보다 이만큼 이상 나쁘지 않으면 유지, 좌/우 채터링 방지) · `k_ang` 1.5(heading_scan 전용)
 
 ## 테스트·실험
