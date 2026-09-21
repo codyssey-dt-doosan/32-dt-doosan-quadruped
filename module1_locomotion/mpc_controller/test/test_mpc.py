@@ -5,6 +5,7 @@ import numpy as np
 from mpc_controller.mpc_controller_node import (
     blocked_cmd,
     goal_to_cmd,
+    grid_matches,
     halt_for_fall,
     inflate,
     pick_heading,
@@ -304,3 +305,10 @@ def test_plan_mpc_pocket_regression_with_reference_heading():
     assert h is not None and h < math.radians(-40)
     v, w = plan_mpc(grid, reference_goal(dist, h, 1.5), **MPC)
     assert w < -0.5
+
+
+def test_grid_matches_geometry():
+    assert grid_matches(np.zeros((N, N)), RES, SIZE)
+    assert not grid_matches(np.zeros((N, N + 1)), RES, SIZE)  # 정사각 아님
+    assert not grid_matches(np.zeros((20, 20)), RES, SIZE)  # elevation_map만 size 2.0으로 바꾼 경우
+    assert not grid_matches(np.zeros((N, N)), 0.2, SIZE)  # mpc만 resolution 바꾼 경우

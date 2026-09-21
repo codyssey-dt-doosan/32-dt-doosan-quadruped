@@ -21,6 +21,8 @@ def _launch_setup(context, *args, **kwargs):
     world = LaunchConfiguration("world").perform(context)
     gui = LaunchConfiguration("gui").perform(context).lower() == "true"
     planner = LaunchConfiguration("planner").perform(context)
+    map_resolution = LaunchConfiguration("map_resolution").perform(context)
+    map_size = LaunchConfiguration("map_size").perform(context)
 
     sim_share = get_package_share_directory("simulation")
     world_file = os.path.join(sim_share, "worlds", f"{world}.sdf")
@@ -63,7 +65,12 @@ def _launch_setup(context, *args, **kwargs):
             PythonLaunchDescriptionSource(
                 PathJoinSubstitution([FindPackageShare(pkg), "launch", launch_file])
             ),
-            launch_arguments={"world": world, "planner": planner}.items(),
+            launch_arguments={
+                "world": world,
+                "planner": planner,
+                "map_resolution": map_resolution,
+                "map_size": map_size,
+            }.items(),
         )
         for pkg, launch_file in (
             ("elevation_map", "elevation_map.launch.py"),
@@ -104,6 +111,16 @@ def generate_launch_description() -> LaunchDescription:
                 "planner",
                 default_value="mpc",
                 description="mpc_controller 플래너: mpc | heading_scan",
+            ),
+            DeclareLaunchArgument(
+                "map_resolution",
+                default_value="0.1",
+                description="elevation_map·mpc_controller 공용 그리드 셀 크기(m)",
+            ),
+            DeclareLaunchArgument(
+                "map_size",
+                default_value="4.0",
+                description="elevation_map·mpc_controller 공용 그리드 한 변(m)",
             ),
             OpaqueFunction(function=_launch_setup),
         ]

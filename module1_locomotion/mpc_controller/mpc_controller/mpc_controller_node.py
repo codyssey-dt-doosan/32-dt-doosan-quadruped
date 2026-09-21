@@ -84,6 +84,12 @@ def blocked_cmd(goal_rel: float, w_max: float) -> tuple[float, float]:
     return (0.0, w)
 
 
+def grid_matches(grid: np.ndarray, resolution: float, size: float) -> bool:
+    """elevation_map 셀 수가 이 노드의 resolution/size와 맞는지. 한쪽만 바꾸면 기하가 조용히 틀어지므로 거부용."""
+    n = int(round(size / resolution))
+    return grid.shape == (n, n)
+
+
 HALT_STATES = frozenset({"fallen", "recovering", "failed"})
 
 
@@ -205,7 +211,7 @@ class MpcControllerNode(Node):
         self.declare_parameter("n_w", 9)
         self.declare_parameter("w_turn", 0.1)
         self.declare_parameter("w_head", 0.5)
-        self.declare_parameter("resolution", 0.1)
+        self.declare_parameter("resolution", 0.1)  # full_system map_resolution/map_size가 elevation_map과 같이 넘김
         self.declare_parameter("size", 4.0)
 
         goal_topic = self.get_parameter("goal_topic").value
@@ -256,6 +262,13 @@ class MpcControllerNode(Node):
                 self._grid_warned = True
                 self.get_logger().warn(f"elevation_map 메시지 형식 오류, 무시: {e}")
             return  # grid/grid_time 갱신 안 함 → 기존 timeout 경로가 정지시킴
+        if not grid_matches(grid, self.get_parameter("resolution").value, self.get_parameter("size").value):
+            if not self._grid_warned:
+                self._grid_warned = True
+                self.get_logger().error(
+                    f"elevation_map {grid.shape} ≠ resolution/size 기대 셀 수. 런치 map_resolution/map_size 확인. 정지"
+                )
+            return
         self.grid = grid
         self.grid_time = self.get_clock().now()
 
