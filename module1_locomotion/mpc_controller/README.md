@@ -44,20 +44,21 @@ heading_scan(참조 헤딩으로 mpc도 사용): `lookahead` 1.5 · `scan_max_de
 
 파라미터: `amp_thigh` 0.3 · `amp_calf` 0.5 · `stride_hz_per_mps` 4.0 · `stride_hz_max` 2.5 · `speed_full` 0.15 · `turn_weight` 0.3 · `cmd_timeout` 0.5
 
-## 다리 구동 go2 — 제자리 trot (`legged.launch.py`, 옵트인)
+## 다리 구동 go2 — trot 보행 (`legged.launch.py`, 옵트인)
 
-CoM·접지력 MPC(C안)로 가는 첫 단계. **기본 구동과 별개**: `full_system.launch.py`는 그대로 VelocityControl + mpc이고, 이 런치는 다리로 서는 go2만 띄운다(아직 제자리 trot만 — 순찰 불가).
+CoM·접지력 MPC(C안)로 가는 첫 단계. **기본 구동과 별개**: `full_system.launch.py`는 그대로 VelocityControl + mpc이고, 이 런치는 다리로 서는 go2만 띄우고 `/cmd_vel` (v, w)를 다리로 따라간다. `full_system` 통합은 아직 — 순찰 불가.
 
 ```bash
-ros2 launch mpc_controller legged.launch.py                        # 기립, /cmd_vel 비영이면 제자리 trot
-ros2 launch mpc_controller legged.launch.py gui:=false trot:=true  # 헤드리스, 무조건 trot
+ros2 launch mpc_controller legged.launch.py                        # 기립, /cmd_vel (v, w)를 trot으로 추종
+ros2 launch mpc_controller legged.launch.py gui:=false trot:=true  # 헤드리스, /cmd_vel 없이도 제자리 trot
 ```
 
 - 모델은 복사본이 아니라 **런치 시 `simulation/models/go2/model.sdf`를 변환**(`legged_model.py`): VelocityControl 제거, 관절별 `JointPositionController` 12개, 다리 마찰 `mu`, 관절 스프링 제거. 원본 구조가 바뀌면 `legged 변환 실패[…]`로 런치가 멈춘다 → 메시지의 단계를 보고 `legged_model.py`를 맞출 것.
 - 다중 `<joint_name>` 컨트롤러는 첫 관절만 피드백한다(묶으면 전도) → 관절마다 하나.
-- `gait_node`: 곧은 다리 → 명목 자세(`d_nominal` 0.25) 2 s 램프 후, 대각 쌍(FL·RR / FR·RL)이 번갈아 발을 수직으로 `lift` 0.04 m 든다. 개루프라 제자리에서 조금씩 기어간다. 토픽 `/legged/<joint>`(Float64) × 12.
-- 런치 인자: `world` · `gui` · `trot` · `mu` 0.8 · `p_gain` 120 · `d_gain` 2.0. 노드 파라미터: `d_nominal` · `lift` · `stride_hz` 2.0 · `duty` 0.5 · `standup_s` 2.0 · `cmd_timeout` 0.5 · `force_trot`.
-- 실측(corridor 헤드리스 12 s): 기울기 최대 1.5°, xy 드리프트 5.6 cm, 발 이격 3.4~3.8 cm. `/cmd_vel` 없으면 기립(이격 0), 발행이 끊기면 기립으로 복귀.
+- `gait_node`: 곧은 다리 → 명목 자세(`d_nominal` 0.25) 2 s 램프 후 대각 쌍(FL·RR / FR·RL) trot. `/cmd_vel` (v, w)를 0.3 s로 평활해, 지지 발을 뒤로 쓸어 전진하고 좌우 보폭 차이로 회전한다. **개루프**(균형·속도 피드백 없음) — 남는 추종 오차는 위층이 odom으로 닫는다. 토픽 `/legged/<joint>`(Float64) × 12.
+- 보정 손잡이: `turn_arm` 0.38(회전 — 기하 0.14로는 앞뒤 발 횡마찰에 42%만 돈다. 2 Hz에선 0.33, 3 Hz에선 0.38이 맞았다), `v_gain` 1.0(전진), `x_max` 0.10(반보폭 한계). `mu`·`p_gain`·`stride_hz`가 바뀌면 다시 맞출 것.
+- 런치 인자: `world` · `gui` · `trot` · `mu` 0.8 · `p_gain` 120 · `d_gain` 2.0. 노드 파라미터: `d_nominal` · `lift` · `stride_hz` 3.0 · `duty` 0.5 · `standup_s` 2.0 · `cmd_timeout` 0.5 · `force_trot` · `turn_arm` · `v_gain` · `x_max`.
+- 실측(corridor 헤드리스 10 s, `stride_hz` 3.0·`turn_arm` 0.38): (v 0.3, w 0) → 0.267 m/s · (0, 0.5) → 0.502 rad/s · (0.5, 1.0) → 0.426 m/s·0.866 rad/s · 후진 (−0.2, 0) → −0.199 m/s, 기울기 최대 2.0°. 제자리 trot 기울기 0.8°·발 이격 3.4~3.6 cm. `/cmd_vel` 없으면 기립, 발행이 끊기면 기립으로 복귀.
 - **맥 GUI는 일시정지로 시작한다**(로봇이 z 0.4 공중에 멈춰 있고 `trot_metrics.py`가 lift 0으로 FAIL) → 창 좌하단 ▶를 누르거나 `gz service -s /world/<world>/control --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean --timeout 3000 --req 'pause: false'`. 헤드리스는 해당 없음. `gait_node`는 sim time 기준이라 ▶ 누른 시점부터 기립 램프가 시작된다. corridor는 벽이 로봇을 가리므로 Entity Tree에서 벽 우클릭 → View → Transparent.
 
 ## 테스트·실험
@@ -65,5 +66,5 @@ ros2 launch mpc_controller legged.launch.py gui:=false trot:=true  # 헤드리�
 ```bash
 python -m pytest test/ -q -p no:launch_testing -p no:launch_ros
 python3 scripts/patrol_metrics.py --world corridor   # full_system 떠 있는 상태에서 한 바퀴 측정
-python3 scripts/trot_metrics.py --world corridor     # legged.launch.py(trot:=true) 떠 있는 상태에서 12 s 측정, PASS/FAIL
+python3 scripts/trot_metrics.py --world corridor --expect-v 0.3 --expect-w 0   # legged.launch.py에 /cmd_vel 걸린 상태에서 추종 측정(인자 없으면 제자리 trot 기준)
 ```
