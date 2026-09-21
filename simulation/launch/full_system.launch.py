@@ -1,11 +1,13 @@
 """통합 런치: Gazebo Harmonic + ros_gz_bridge + 모듈 1·2·3."""
 
 import os
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    ExecuteProcess,
     IncludeLaunchDescription,
     OpaqueFunction,
     SetEnvironmentVariable,
@@ -31,7 +33,10 @@ def _launch_setup(context, *args, **kwargs):
     urdf_file = os.path.join(sim_share, "urdf", "go2.urdf")
     models_path = os.path.join(sim_share, "models")
 
-    gz_args = f"-r {world_file}" if gui else f"-s -r {world_file}"
+    # macOS는 서버+GUI 한 프로세스(gz sim world.sdf)를 지원하지 않음 → 서버(-s)와 GUI(-g)를 따로 띄운다
+    split_gui = gui and sys.platform == "darwin"
+    gz_args = f"-r {world_file}" if gui and not split_gui else f"-s -r {world_file}"
+    gz_gui = [ExecuteProcess(cmd=["gz", "sim", "-g"], output="screen")] if split_gui else []
 
     with open(urdf_file, "r", encoding="utf-8") as f:
         robot_description = f.read()
@@ -90,6 +95,7 @@ def _launch_setup(context, *args, **kwargs):
     return [
         SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", models_path),
         gz_sim,
+        *gz_gui,
         bridge,
         robot_state_publisher,
         *module_launches,
