@@ -13,8 +13,9 @@ SIDE = {"FL": 1.0, "FR": -1.0, "RL": 1.0, "RR": -1.0}
 HIP_Y, HIP_Z = 0.04, -0.08  # hip 축 → thigh 축 (y는 SIDE 곱)
 L1, L2 = 0.18, 0.10  # thigh 축 → calf 축, calf 축 → 구 중심
 LIMITS = ((-1.05, 1.05), (-0.66, 2.97), (-1.57, 1.57))
-Q_NOM = (0.0, 0.45, -1.35)
-FOOT_Z_NOM = -0.3042
+# calf −1.35(여유 0.22 rad)는 pitch +5° 명령에서 한계 근접(sat) → −1.2(여유 0.37). thigh는 발이 hip 바로 밑에 오는 값
+Q_NOM = (0.0, 0.407, -1.2)
+FOOT_Z_NOM = -0.3155  # Q_NOM에서 구 중심 z
 
 
 def _rx(a: float) -> np.ndarray:
@@ -44,6 +45,18 @@ def jacobian(leg: str, q) -> np.ndarray:
     d1 = rx @ np.array([-L1 * c1 - L2 * c12, 0.0, L1 * s1 + L2 * s12])
     d2 = rx @ np.array([-L2 * c12, 0.0, L2 * s12])
     return np.column_stack([d0, d1, d2])
+
+
+def contact_jacobian(leg: str, q, foot_r: float, n_B) -> np.ndarray:
+    """접촉점(구 중심 − r·n)의 자코비안. τ = −J_cᵀf 가 접촉점에 걸린 힘의 관절 모멘트가 된다.
+
+    구 중심에서 −r·n만큼 떨어진 점을 calf에 붙은 점으로 보면 열마다 a_j × (−r·n)이 더해진다(a_j = 관절 축, B 프레임).
+    힘이 n과 평행이면 중심 자코비안과 같고, 접선 성분이 있을 때만 다르다(평지 0, 경사 접선력 ≈10%).
+    """
+    q0 = q[0]
+    axes = (np.array([1.0, 0.0, 0.0]), _rx(q0) @ np.array([0.0, 1.0, 0.0]))
+    offset = -foot_r * np.asarray(n_B, float)
+    return jacobian(leg, q) + np.column_stack([np.cross(axes[0], offset), np.cross(axes[1], offset), np.cross(axes[1], offset)])
 
 
 def ik(leg: str, p_B) -> tuple | None:

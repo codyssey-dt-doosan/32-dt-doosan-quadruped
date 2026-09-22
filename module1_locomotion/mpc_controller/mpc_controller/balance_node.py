@@ -18,8 +18,8 @@ from std_msgs.msg import Float64
 
 from mpc_controller.body_estimate import com_target, estimate, yaw_aligned
 from mpc_controller.force_qp import ForceQP
-from mpc_controller.leg_kinematics import Q_NOM
-from mpc_controller.legged_model import JOINTS, ros_force_topic
+from mpc_controller.leg_kinematics import Q_NOM, contact_jacobian
+from mpc_controller.legged_model import JOINTS, LEGS, ros_force_topic
 
 STANDUP_S, BLEND_S = 2.0, 1.0
 KP_START, KD_START, KD_RUN = 120.0, 2.0, 1.0
@@ -63,7 +63,7 @@ class BalanceNode(Node):
                 ("mass", 13.2),
                 ("inertia", [0.22, 0.48, 0.58]),
                 ("com_offset", [0.0, 0.0, -0.04]),
-                ("height", 0.28),  # CoM 높이(법선). 0.266은 calf 한계(−1.57)에서의 최소 높이 = 하드스톱 — 목표로 쓰면 안 됨
+                ("height", 0.295),  # CoM 높이(법선) = Q_NOM 자세값. 0.266은 calf 한계(−1.57)에서의 최소 높이 = 하드스톱 — 목표로 쓰면 안 됨
                 ("com_shift", 1.0),
                 ("kp_pos", [50.0, 50.0, 100.0]),
                 ("kd_pos", [5.0, 5.0, 10.0]),
@@ -174,7 +174,10 @@ class BalanceNode(Node):
                     self.stats["sum_fn"] = float((fm @ est.n).sum())
                     self.stats["sum_ft"] = float((fm @ est.t1).sum())
                     f_B = (R.T @ f.reshape(4, 3).T).T
-                    self.tau_ff = np.concatenate([-est.J[i].T @ f_B[i] for i in range(4)])
+                    n_B = R.T @ est.n  # 접촉점은 구 중심 − r·n: 접선력의 팔 길이 보정(평지에선 중심 자코비안과 동일)
+                    self.tau_ff = np.concatenate(
+                        [-contact_jacobian(leg, self.q[3 * i : 3 * i + 3], self.p["foot_r"], n_B).T @ f_B[i] for i, leg in enumerate(LEGS)]
+                    )
         except Exception as e:
             f = None
             self.get_logger().warning(f"QP 경로 예외: {e}", throttle_duration_sec=1.0)

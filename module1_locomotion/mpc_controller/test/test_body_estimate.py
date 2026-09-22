@@ -53,7 +53,7 @@ def test_terrain_parallel_body_has_zero_orientation_error(euler):
 def test_velocity_from_body_rate():
     """발 고정, 몸체가 코를 숙이는 방향(ω_y > 0)으로 돌면 CoM은 앞(+x)으로 간다."""
     e = estimate(Q12, ZERO12, I3, np.array([0.0, 0.1, 0.0]), ALL, 0.02, COM)
-    assert e.v[0] == pytest.approx(0.1 * (0.3042 - 0.04), abs=1e-4) and abs(e.v[1]) < 1e-9
+    assert e.v[0] == pytest.approx(0.1 * (-FOOT_Z_NOM - 0.04), abs=1e-4) and abs(e.v[1]) < 1e-9
 
 
 def test_velocity_from_joint_rates():

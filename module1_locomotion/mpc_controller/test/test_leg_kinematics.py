@@ -37,7 +37,7 @@ def test_fk_straight_leg_hangs_below_hip():
 
 
 def test_hip_roll_rotates_about_x():
-    p = foot_pos("FL", (0.3, 0.45, -1.35))
+    p = foot_pos("FL", (0.3, *Q_NOM[1:]))
     p0 = foot_pos("FL", Q_NOM)
     assert p[0] == pytest.approx(p0[0])  # x는 hip 롤에 안 변함
     assert math.hypot(p[1] - 0.10, p[2]) == pytest.approx(math.hypot(p0[1] - 0.10, p0[2]))
@@ -82,3 +82,20 @@ def test_ik_reach_on_15deg_slope_with_com_shift():
     for leg in LEGS:
         p = foot_pos(leg, Q_NOM) - np.array([shift, 0.0, 0.0])  # 몸체가 경사 위쪽(+x)으로 이동 = 발은 −x
         assert ik(leg, p) is not None, leg
+
+
+def test_contact_jacobian_equals_center_jacobian_for_vertical_force_only():
+    """접촉점 = 구 중심 − r·n. 힘이 n과 평행이면 토크 동일, 접선 성분이 있으면 r·(a·(n×f))만큼 달라진다."""
+    from mpc_controller.leg_kinematics import contact_jacobian
+
+    q, r, n = Q_NOM, 0.02, np.array([0.0, 0.0, 1.0])
+    J, Jc = jacobian("FL", q), contact_jacobian("FL", q, r, n)
+    assert Jc.shape == (3, 3) and not np.allclose(J, Jc)
+    f_vert = np.array([0.0, 0.0, 32.3])
+    assert np.allclose(-Jc.T @ f_vert, -J.T @ f_vert, atol=1e-9)
+    f_tan = np.array([10.0, 0.0, 32.3])
+    dtau = (-Jc.T @ f_tan) - (-J.T @ f_tan)
+    a_thigh = np.array([0.0, 1.0, 0.0])  # hip 롤 0이면 thigh·calf 축은 ŷ
+    assert dtau[1] == pytest.approx(r * a_thigh @ np.cross(n, f_tan)) and dtau[2] == pytest.approx(dtau[1])
+    assert dtau[0] == pytest.approx(0.0)  # hip 축 x̂: x̂·(ẑ×x̂ f_x) = 0
+    assert contact_jacobian("FL", q, 0.0, n) == pytest.approx(J)
