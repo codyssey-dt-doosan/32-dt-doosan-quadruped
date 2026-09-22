@@ -88,7 +88,7 @@ ros2 launch mpc_controller balance.launch.py pitch_offset:=0.0873    # 자세 �
 | f_i | G | 지면이 발에 주는 힘 |
 | τ | 관절 | −Jᵀ(Rᵀf) + PD |
 
-- 파라미터(보정 손잡이): `mass` 13.2 · `inertia` diag(0.22, 0.48, 0.58) · `com_offset` (0, 0, −0.04) · `height` **0.28**(법선 방향 목표 CoM 높이) · `com_shift` 1.0 · `kp_pos` (50,50,100)·`kd_pos` (5,5,10) · `kp_rot` (100,100,50)·`kd_rot` (5,5,5) · `mu` 0.5 · `f_min` 2 N·`f_max` 120 N · 가중치 diag(1,1,2, 10,10,5) · `alpha` 1e-3·`beta` 1e-2 · `start_delay` 3 s.
+- 파라미터(보정 손잡이): `mass` 13.2 · `inertia` diag(0.22, 0.48, 0.58) · `com_offset` (0, 0, −0.04) · `height` **0.295**(법선 방향 목표 CoM 높이 = `Q_NOM` (0, 0.407, −1.2) 자세값) · `com_shift` 1.0 · `kp_pos` (50,50,100)·`kd_pos` (5,5,10) · `kp_rot` (100,100,50)·`kd_rot` (5,5,5) · `mu` 0.5 · `f_min` 2 N·`f_max` 120 N · 가중치 diag(1,1,2, 10,10,5) · `alpha` 1e-3·`beta` 1e-2 · `start_delay` 3 s.
 - 기동 순서(첫 `/joint_states` 이후 sim 시간 기준): 0~2 s 관절 PD 램프(Kp 120·Kd 2, q를 곧은 다리→`q_nom`으로 선형 램프) → 2~3 s smoothstep 블렌딩(Kp 120→0·Kd 2→1로, QP는 t≥2부터 계산) → t≥3 QP 주도(Kp 0·Kd 1, 감쇠만 — 관절 배치는 접지 발·몸체 자세가 결정).
 - hold(안전) 후퇴: QP 실패가 50 ms 넘게 지속, 기울기 > 45°, 또는 IMU·관절 콜백이 0.1 s 이상 끊기면 `hold` 모드로 전환 — Kp 120 PD로 `q_nom` 고정(래치, 불연속 허용). 추정→QP→τ_ff 경로는 통째로 try/except로 감싸 예외 시 `f=None`으로 처리(경고 로그, throttle 1 s) — nan·솔버 예외가 executor를 죽이지 않고 기존 supervisor 경로로 hold에 들어간다.
 - 실측 명령: `log/balance_one.sh <태그> <metrics 인자...> -- [launch 인자...]`(로컬 스크립트, gitignore 대상 — 레포에 없음; `-- ramp_deg:=15` 등 런치 인자 전달). 내부에서 `scripts/balance_metrics.py --world <w> --log log/balance_<태그>.log`를 호출하며, 지원 플래그는 `--duration`(기본 15) · `--push N S`(2 s 시점에 +y N을 S s 인가 후 clear) · `--expect-pitch D`(경사 판정, 법선/접선 힘 합 밴드 포함). 노드가 1 Hz로 남기는 status 로그는 `mode`·`qp_ms`(평균/p99)·`fail`·`sat`·`sum_fz`·`sum_fn`·`sum_ft`·`calf_min`(가장 굽은 calf 관절 각, rad — 하드스톱은 −1.57)·`tilt`를 담는다.
@@ -97,20 +97,16 @@ ros2 launch mpc_controller balance.launch.py pitch_offset:=0.0873    # 자세 �
 
 | 기준 | 시험 | 결과 | 판정 |
 |---|---|---|---|
-| 1 | 평지 기립 | z_mean 0.3215·z_std 0.00 mm·기울기 0.20°·Σf_z 127.4 N(mg 129.4, −1.5%)·QP 0.08 ms 평균/0.11 ms p99·fail 0·sat 0·calf_min −1.393(한계 여유 0.18 rad) | PASS |
-| 2 | +y 20 N × 0.5 s 밀기 | 최대 기울기 1.41°·xy 이탈 3.6 cm·클리어 후 복귀 <0.7 s·발 미끄러짐 0.3 cm | PASS |
-| 3 | 경사 15° 기립 | pitch −14.28°(오차 0.72°)·미끄러짐 0 cm·Σnᵀf 127.1 N(필요 124.9, +1.8%)·\|Σtᵀf\| 40.0 N(필요 33.5, +19% — 판정 밴드 ±0.10·mg 안, 접촉 자코비안 r항 미보정 추정)·calf_min −1.296 | PASS |
-| 4 | 경사 위 `pitch_offset` ±5° | +5°(코 내림) → −9.21°(목표 −10, 오차 0.79°) 단 sat 14·calf_min −1.535; −5° → −19.17°(목표 −20, 오차 0.83°) sat 0 | 추종 PASS / +5°는 포화로 FAIL |
+| 1 | 평지 기립 | z_mean 0.337·z_std 0.00 mm·기울기 0.10°·Σf_z 126.7 N(mg 129.4, −2%)·QP 0.08 ms 평균/0.11 ms p99·fail 0·sat 0·calf_min −1.18(한계 여유 0.39 rad) | PASS |
+| 2 | +y 20 N × 0.5 s 밀기 | 최대 기울기 2.22°·xy 이탈 3.4 cm·클리어 후 복귀 <1 s·발 미끄러짐 0.3 cm | PASS |
+| 3 | 경사 15° 기립 | pitch −15.48°(오차 0.5°)·미끄러짐 0 cm·Σnᵀf 121.4 N(필요 124.9, −2.8%)·\|Σtᵀf\| 34.5 N(필요 33.5, +3%)·calf_min −1.05 | PASS |
+| 4 | 경사 위 `pitch_offset` ±5° | +5°(코 내림) → −10.30°(목표 −10)·sat 0·calf_min −1.18; −5° → −20.53°(목표 −20)·sat 0 | PASS |
 | 5 | QP·토크 시간 | 평균 0.08 ms·p99 0.1 ms | PASS |
 | 6 | 회귀 | pytest 107 전부 통과, `walk_one.sh 0.3 0` → 0.268 m/s(HEAD와 동률), `legged_model` 기본 출력 HEAD와 문자열 동일 | PASS |
 
-**미해결 이슈(백로그):**
+**미해결 이슈(백로그):** 없음(기준 1~6 전부 PASS). 함정만 둘 — ① `gz topic -p`는 부하 중 간헐적으로 미전달(rc 0)이라 `--push` 반응이 0이면 재실행; **persistent 렌치는 발행마다 누적**되니 2회 발행하면 안 됨(40 N이면 전도). ② IMU는 초기 자세 기준이라 스폰이 수평이어야 함.
 
-1. **`pitch_offset` +5°(코 내림)에서 토크 포화 14회, calf_min −1.535(한계 여유 0.035 rad).** 앞다리가 더 접혀 한계에 근접. 자세 명령 범위를 쓰려면 기립 자세를 더 편 쪽으로(Q_NOM calf −1.35 → −1.2) 옮기거나 관절 한계 근처 soft limit.
-2. **접촉 자코비안 −r·n 항 누락.** τ는 구 중심 자코비안인데 접촉력은 중심 − r·n에 작용 → 경사 접선력 명령이 필요보다 19% 큼(평지엔 0). 다음 스펙(④)에서 보정.
-3. `balance_metrics --push`의 `gz topic -p`는 부하 중 간헐적으로 미전달(rc 0) — 2회 발행으로 완화, 반응 0이면 재실행.
-
-**해결됨(2026-09-22 스파이크 → [[DT-작업노트-2026-09-22-C안-무릎-하드스톱-스파이크]]):** "토크→힘 14% 손실"과 무릎 하드스톱의 원인은 SDF 관절 `<damping>1.0` — gz-sim 8.6/DART가 정지 상태에도 calf에 ≈1.05 N·m를 먹어 τ=−Jᵀf가 30% 부족했다(접촉 센서로 발 반력 31.2 N = mg/4 정상 확인). `balance.launch.py`는 변환본 관절 damping을 0으로 두고(`make_legged_model(damping=0.0)`, 감쇠는 노드 Kd_j) `height` 0.28로 선다. `legged.launch.py`·trot(gz 위치 PD)는 오차로 흡수하므로 원본 damping 1.0 유지.
+**해결 이력(2026-09-22):** ① "토크→힘 14% 손실"·무릎 하드스톱의 원인은 SDF 관절 `<damping>1.0` — gz-sim 8.6/DART가 정지 상태에도 calf에 ≈1.05 N·m를 먹어 τ=−Jᵀf가 30% 부족했다(접촉 센서로 발 반력 31.2 N = mg/4 정상 확인) → `balance.launch.py`는 변환본 관절 damping 0(`make_legged_model(damping=0.0)`, 감쇠는 노드 Kd_j). `legged.launch.py`·trot(gz 위치 PD)는 원본 1.0 유지 → [[DT-작업노트-2026-09-22-C안-무릎-하드스톱-스파이크]]. ② 접촉 자코비안에 −r·n 항(`leg_kinematics.contact_jacobian`) — 경사 접선력 명령 40.0 → 34.5 N. ③ 기립 자세 `Q_NOM` calf −1.35 → −1.2(thigh 0.407, CoM 높이 0.295) — pitch +5° 명령의 포화 해소.
 
 **맥 노트:** `gz sim -s -r`가 아니라 일시정지로 시작하고, 노드가 `start_delay`(3 s) 뒤 `gz service`로 재개한다. GUI는 `legged.launch.py`와 같이 서버·창 분리 기동. IMU orientation은 **초기 자세 기준**(월드 기준 아님) — 스폰이 수평(roll=pitch=0)이어야 하며 현재 corridor의 go2 스폰은 이를 만족한다.
 
