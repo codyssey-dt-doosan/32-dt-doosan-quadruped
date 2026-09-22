@@ -55,13 +55,14 @@ def log_stats(path: str) -> dict:
     if not lines:
         return {}
     m = re.search(
-        r"mode=(\w+) qp_ms=([\d.]+)/([\d.]+) fail=(\d+) sat=(\d+) sum_fz=([-\d.]+) sum_fn=([-\d.]+) sum_ft=([-\d.]+)",
+        r"mode=(\w+) qp_ms=([\d.]+)/([\d.]+) fail=(\d+) sat=(\d+) sum_fz=([-\d.]+) sum_fn=([-\d.]+) sum_ft=([-\d.]+) "
+        r"calf_min=([-\d.]+)",
         lines[-1],
     )
     return {
         "mode": m.group(1), "qp_ms": float(m.group(2)), "qp_p99": float(m.group(3)), "fail": int(m.group(4)),
         "sat": int(m.group(5)), "sum_fz": float(m.group(6)), "sum_fn": float(m.group(7)), "sum_ft": float(m.group(8)),
-        "hold": hold,
+        "calf_min": float(m.group(9)), "hold": hold,
     }
 
 
@@ -91,12 +92,13 @@ def main() -> int:
         return 1
     st = log_stats(a.log)
     z = [r[2] for r in rows]
-    z_std = (sum((v - sum(z) / len(z)) ** 2 for v in z) / len(z)) ** 0.5
+    z_mean = sum(z) / len(z)
+    z_std = (sum((v - z_mean) ** 2 for v in z) / len(z)) ** 0.5
     tilt = max(r[3] for r in rows)
     pitch = sum(r[4] for r in rows) / len(rows)
     drift = math.hypot(rows[-1][0] - rows[0][0], rows[-1][1] - rows[0][1])
     slip = max(math.hypot(r[6][l][0] - rows[0][6][l][0], r[6][l][1] - rows[0][6][l][1]) for r in rows for l in LEGS)
-    out = (f"n={len(rows)} z_std_mm={z_std * 1e3:.2f} tilt_max={tilt:.2f} pitch_mean={pitch:.2f} xy_drift_cm={drift * 100:.1f} "
+    out = (f"n={len(rows)} z_mean={z_mean:.4f} z_std_mm={z_std * 1e3:.2f} tilt_max={tilt:.2f} pitch_mean={pitch:.2f} xy_drift_cm={drift * 100:.1f} "
            f"foot_slip_cm={slip * 100:.1f} " + " ".join(f"{k}={v}" for k, v in st.items()))
     ok = st.get("mode") == "run" and st.get("hold", 1) == 0 and st.get("fail", 1) == 0 and st.get("sat", 1) == 0
     ok &= st.get("qp_ms", 9) < 2.0 and st.get("qp_p99", 9) < 5.0

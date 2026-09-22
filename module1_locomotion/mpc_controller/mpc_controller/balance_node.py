@@ -63,7 +63,7 @@ class BalanceNode(Node):
                 ("mass", 13.2),
                 ("inertia", [0.22, 0.48, 0.58]),
                 ("com_offset", [0.0, 0.0, -0.04]),
-                ("height", 0.266),
+                ("height", 0.28),  # CoM 높이(법선). 0.266은 calf 한계(−1.57)에서의 최소 높이 = 하드스톱 — 목표로 쓰면 안 됨
                 ("com_shift", 1.0),
                 ("kp_pos", [50.0, 50.0, 100.0]),
                 ("kd_pos", [5.0, 5.0, 10.0]),
@@ -153,31 +153,37 @@ class BalanceNode(Node):
         if not self.p["enable_qp"] or self._now() - self.t0 < STANDUP_S:
             self._check_mode()
             return
-        est = estimate(self.q, self.qd, R, w_B, (True,) * 4, self.p["foot_r"], self.p["com_offset"])
         f = None
-        if est is not None:
-            x_des = com_target(est.n, self.p["height"], self.p["com_shift"])
-            a_des = np.array(self.p["kp_pos"]) * (x_des - est.x) - np.array(self.p["kd_pos"]) * est.v
-            R_des = est.R_des @ Rotation.from_euler("xy", [self.p["roll_offset"], self.p["pitch_offset"]]).as_matrix()
-            e_R = Rotation.from_matrix(R_des @ R.T).as_rotvec()
-            alpha_des = np.array(self.p["kp_rot"]) * e_R - np.array(self.p["kd_rot"]) * (R @ w_B)
-            I_G = R @ self.I_B @ R.T
-            b = np.concatenate([self.p["mass"] * (a_des + G * np.array([0.0, 0.0, 1.0])), I_G @ alpha_des])
-            tic = time.perf_counter()
-            f = self.qp.solve(est.r, est.n, b, (True,) * 4, self.f_prev)
-            self.stats["qp_ms"].append((time.perf_counter() - tic) * 1e3)
+        try:
+            est = estimate(self.q, self.qd, R, w_B, (True,) * 4, self.p["foot_r"], self.p["com_offset"])
+            if est is not None:
+                x_des = com_target(est.n, self.p["height"], self.p["com_shift"])
+                a_des = np.array(self.p["kp_pos"]) * (x_des - est.x) - np.array(self.p["kd_pos"]) * est.v
+                R_des = est.R_des @ Rotation.from_euler("xy", [self.p["roll_offset"], self.p["pitch_offset"]]).as_matrix()
+                e_R = Rotation.from_matrix(R_des @ R.T).as_rotvec()
+                alpha_des = np.array(self.p["kp_rot"]) * e_R - np.array(self.p["kd_rot"]) * (R @ w_B)
+                I_G = R @ self.I_B @ R.T
+                b = np.concatenate([self.p["mass"] * (a_des + G * np.array([0.0, 0.0, 1.0])), I_G @ alpha_des])
+                tic = time.perf_counter()
+                f = self.qp.solve(est.r, est.n, b, (True,) * 4, self.f_prev)
+                self.stats["qp_ms"].append((time.perf_counter() - tic) * 1e3)
+                del self.stats["qp_ms"][:-200]
+                if f is not None:
+                    self.stats["sum_fz"] = float(f[2::3].sum())
+                    fm = f.reshape(4, 3)
+                    self.stats["sum_fn"] = float((fm @ est.n).sum())
+                    self.stats["sum_ft"] = float((fm @ est.t1).sum())
+                    f_B = (R.T @ f.reshape(4, 3).T).T
+                    self.tau_ff = np.concatenate([-est.J[i].T @ f_B[i] for i in range(4)])
+        except Exception as e:
+            f = None
+            self.get_logger().warning(f"QP 경로 예외: {e}", throttle_duration_sec=1.0)
         if f is None:
             self.stats["fail"] += 1
             self.qp_fail_since = self.qp_fail_since or self._now()
         else:
             self.qp_fail_since = None
             self.f_prev = f
-            self.stats["sum_fz"] = float(f[2::3].sum())
-            fm = f.reshape(4, 3)
-            self.stats["sum_fn"] = float((fm @ est.n).sum())
-            self.stats["sum_ft"] = float((fm @ est.t1).sum())
-            f_B = (R.T @ f.reshape(4, 3).T).T
-            self.tau_ff = np.concatenate([-est.J[i].T @ f_B[i] for i in range(4)])
         self._check_mode()
 
     def _check_mode(self) -> None:
@@ -197,7 +203,8 @@ class BalanceNode(Node):
         self.get_logger().info(
             f"status mode={self.mode} qp_ms={np.mean(ms) if ms else 0:.2f}/{np.percentile(ms, 99) if ms else 0:.2f} "
             f"fail={self.stats['fail']} sat={self.stats['sat']} sum_fz={self.stats['sum_fz']:.1f} "
-            f"sum_fn={self.stats.get('sum_fn', 0):.1f} sum_ft={self.stats.get('sum_ft', 0):.1f} tilt={self.tilt_deg:.2f}"
+            f"sum_fn={self.stats.get('sum_fn', 0):.1f} sum_ft={self.stats.get('sum_ft', 0):.1f} "
+            f"calf_min={min(self.q[2::3]) if self.q is not None else 0:.3f} tilt={self.tilt_deg:.2f}"
         )
 
 

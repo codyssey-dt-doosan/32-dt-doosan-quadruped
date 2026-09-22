@@ -2,6 +2,9 @@ import math
 
 import numpy as np
 import pytest
+
+pytest.importorskip("osqp")
+
 from scipy.spatial.transform import Rotation
 
 from mpc_controller.body_estimate import com_target, estimate, terrain_normal, yaw_aligned

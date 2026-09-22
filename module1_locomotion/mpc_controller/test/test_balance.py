@@ -4,6 +4,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytest.importorskip("osqp")
+
 from mpc_controller.balance_node import KD_RUN, KD_START, KP_START, blend, gains, joint_torque, q_startup, supervise
 from mpc_controller.leg_kinematics import Q_NOM
 
@@ -56,9 +58,13 @@ def test_log_stats_parses_status_line(tmp_path):
     from balance_metrics import log_stats  # scripts/ 경로는 conftest 없이 sys.path에 추가
 
     p = tmp_path / "x.log"
-    p.write_text("[INFO] status mode=run qp_ms=0.31/0.80 fail=0 sat=0 sum_fz=129.1 sum_fn=125.0 sum_ft=-33.5 tilt=15.02\n")
+    p.write_text(
+        "[INFO] status mode=run qp_ms=0.31/0.80 fail=0 sat=0 sum_fz=129.1 sum_fn=125.0 sum_ft=-33.5 calf_min=-1.351 "
+        "tilt=15.02\n"
+    )
     st = log_stats(str(p))
     assert st["mode"] == "run" and st["qp_ms"] == 0.31 and st["sum_fn"] == 125.0 and st["hold"] == 0
+    assert st["calf_min"] == -1.351
 
 
 def test_supervise():
