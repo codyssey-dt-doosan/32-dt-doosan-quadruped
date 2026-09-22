@@ -62,6 +62,55 @@ ros2 launch simulation full_system.launch.py locomotion:=legged    # 전체 스�
 - 실측(corridor 헤드리스 10 s, `stride_hz` 3.0·`turn_arm` 0.38): (v 0.3, w 0) → 0.267 m/s · (0, 0.5) → 0.502 rad/s · (0.5, 1.0) → 0.426 m/s·0.866 rad/s · 후진 (−0.2, 0) → −0.199 m/s, 기울기 최대 2.0°. 제자리 trot 기울기 0.8°·발 이격 3.4~3.6 cm. `/cmd_vel` 없으면 기립, 발행이 끊기면 기립으로 복귀.
 - **맥 GUI는 일시정지로 시작한다**(로봇이 z 0.4 공중에 멈춰 있고 `trot_metrics.py`가 lift 0으로 FAIL) → 창 좌하단 ▶를 누르거나 `gz service -s /world/<world>/control --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean --timeout 3000 --req 'pause: false'`. 헤드리스는 해당 없음. `gait_node`는 sim time 기준이라 ▶ 누른 시점부터 기립 램프가 시작된다. corridor는 벽이 로봇을 가리므로 Entity Tree에서 벽 우클릭 → View → Transparent.
 
+## 힘 제어 기립 (`balance.launch.py`, 옵트인)
+
+CoM·접지력 QP(C안 ①~③: 상태 입력·다리 기구학·힘 제어 기립)로 서는 것. `legged.launch.py`(위치 PD·개루프 trot)와는 별개 런치이고, 지평 MPC(SRB, trot·경사 대응, ④)는 범위 밖. `full_system` 통합 안 함.
+
+```bash
+ros2 launch mpc_controller balance.launch.py                       # 평지 QP 주도 기립
+ros2 launch mpc_controller balance.launch.py gui:=false             # 헤드리스
+ros2 launch mpc_controller balance.launch.py ramp_deg:=15           # 15° 경사판 위 기립
+ros2 launch mpc_controller balance.launch.py qp:=false               # QP 끄고 관절 PD만(기동 게인 고정, 스파이크 기준선)
+ros2 launch mpc_controller balance.launch.py pitch_offset:=0.0873    # 자세 목표 오프셋(rad)
+```
+
+- 의존성 `osqp`는 `package.xml`에 선언하지 않음(옵트인) — `conda install -n ros_env -c conda-forge osqp`. 없으면 import 시 설치법을 담은 오류로 종료.
+- 프레임 규약(전부 스펙 §3.0과 동일):
+
+| 기호 | 프레임 | 의미 |
+|---|---|---|
+| q, q̇ | 관절 | `/joint_states` 12개 |
+| `foot_pos(leg, q)` | B | 발 **구 중심**(calf 원점 기준), 몸체 원점 기준 |
+| J | B | 구 중심 속도 = J·q̇ |
+| R = R_GB | B→G | Rz(−ψ)·R_WB(IMU 자세, yaw 제거) |
+| n, t₁, t₂ | G | 지형 법선·마찰콘 접선 기저 |
+| 접촉점 p_i | G | R·`foot_pos` − r·n (구 중심 − 반지름×법선) |
+| f_i | G | 지면이 발에 주는 힘 |
+| τ | 관절 | −Jᵀ(Rᵀf) + PD |
+
+- 파라미터(보정 손잡이): `mass` 13.2 · `inertia` diag(0.22, 0.48, 0.58) · `com_offset` (0, 0, −0.04) · `height` **0.28**(법선 방향 목표 CoM 높이) · `com_shift` 1.0 · `kp_pos` (50,50,100)·`kd_pos` (5,5,10) · `kp_rot` (100,100,50)·`kd_rot` (5,5,5) · `mu` 0.5 · `f_min` 2 N·`f_max` 120 N · 가중치 diag(1,1,2, 10,10,5) · `alpha` 1e-3·`beta` 1e-2 · `start_delay` 3 s.
+- 기동 순서(첫 `/joint_states` 이후 sim 시간 기준): 0~2 s 관절 PD 램프(Kp 120·Kd 2, q를 곧은 다리→`q_nom`으로 선형 램프) → 2~3 s smoothstep 블렌딩(Kp 120→0·Kd 2→1로, QP는 t≥2부터 계산) → t≥3 QP 주도(Kp 0·Kd 1, 감쇠만 — 관절 배치는 접지 발·몸체 자세가 결정).
+- hold(안전) 후퇴: QP 실패가 50 ms 넘게 지속, 기울기 > 45°, 또는 IMU·관절 콜백이 0.1 s 이상 끊기면 `hold` 모드로 전환 — Kp 120 PD로 `q_nom` 고정(래치, 불연속 허용). 추정→QP→τ_ff 경로는 통째로 try/except로 감싸 예외 시 `f=None`으로 처리(경고 로그, throttle 1 s) — nan·솔버 예외가 executor를 죽이지 않고 기존 supervisor 경로로 hold에 들어간다.
+- 실측 명령: `log/balance_one.sh <태그> <metrics 인자...> -- [launch 인자...]`(로컬 스크립트, gitignore 대상 — 레포에 없음). 내부에서 `scripts/balance_metrics.py --world <w> --log log/balance_<태그>.log`를 호출하며, 지원 플래그는 `--duration`(기본 15) · `--push N S`(2 s 시점에 +y N을 S s 인가 후 clear) · `--expect-pitch D`(경사 판정, 법선/접선 힘 합 밴드 포함). 노드가 1 Hz로 남기는 status 로그는 `mode`·`qp_ms`(평균/p99)·`fail`·`sat`·`sum_fz`·`sum_fn`·`sum_ft`·`calf_min`(가장 굽은 calf 관절 각, rad — 하드스톱은 −1.57)·`tilt`를 담는다.
+
+실측(corridor 헤드리스):
+
+| 기준 | 시험 | 결과 | 판정 |
+|---|---|---|---|
+| 1 | 평지 기립 | z_std 0.00 mm·기울기 0.00°·Σf_z **147.8 N**(mg 129.4)·QP 0.07 ms 평균/0.1 ms p99·fail 0·sat 0·calf_min −1.570(하드스톱) | **FAIL**(Σf_z) |
+| 2 | +y 20 N × 0.5 s 밀기 | 최대 기울기 2.4°·xy 이탈 3.1 cm·복귀 ~0 s·발 미끄러짐 0.2 cm | 구속 상태 측정 — 재측정 필요 |
+| 3 | 경사 15° 기립 | pitch −13.9°(오차 1.1°<2° OK)·미끄러짐 0 cm OK, 그러나 Σnᵀf 138.8 N(필요 124.9 N, ±5% 밴드 밖)·\|Σtᵀf\| 41.1 N(필요 33.5 N, ±10% 밴드 밖) | PARTIAL |
+| 4 | 경사 위 `pitch_offset` ±5° | 몸체 반응 0.03~0.06°(명령의 1/100 미만) | FAIL |
+| 5 | QP·토크 시간 | 평균 0.08 ms·p99 0.1 ms | PASS |
+| 6 | 회귀 | pytest 107 전부 통과, `walk_one.sh 0.3 0` → 0.268 m/s(HEAD와 동률), `legged_model` 기본 출력 HEAD와 문자열 동일 | PASS |
+
+**미해결 이슈(백로그):**
+
+1. **무릎(calf) 하드스톱.** `height` 0.266은 재조정 손잡이가 아니라 우연히 하드스톱과 같은 값이었다 — 4다리 calf가 전부 관절 한계 −1.57 rad에 닿았을 때 CoM 높이 = hypot(L1, L2) = hypot(0.18, 0.10) = 0.20591 → 구 중심 z = −0.08 − 0.20591 = −0.28591 → 추정기 x_z = −0.04 − (−0.28591 − 0.02) = 0.26591 ≈ 0.266. `height`를 0.28로 되돌리면 QP가 몸을 그 높이로 밀어 올리려 하지만 calf가 −1.57에서 막혀 있어 몸이 Q_NOM 대비 약 1.8 cm 가라앉을 때까지(=calf가 하드스톱에 닿을 때까지) 못 올라간다. "14% 잉여 명령"(147.8 vs 129.4 N)의 정체는 이 14 mm × `kp_pos_z` 100 × `mass` 13.2 kg ≈ 18.4 N — QP가 관절 한계라는 강체 구속을 힘으로 오인하고 계속 누르는 것이다. 실측: 검증 실행(`height=0.28`, corridor)에서 status 로그 `calf_min=-1.570`, `sum_fz=147.8` — **하드스톱 가설 CONFIRMED**. 기준 1은 z_std·기울기는 통과하지만 Σf_z는 FAIL(구속 반력을 측정한 것이지 힘 제어가 아니었으므로 이게 정직한 상태). 기준 2(밀기 복원)도 같은 이유로 "구속 상태 측정 — 재측정 필요"로 표시. 다음 단계: ① 목표 높이·기동 자세를 한계에서 떨어뜨리고, `Kp_j`가 0인 QP 구간에서 관절 한계 여유를 감시하는 soft limit(또는 대체 목표 높이) 추가 ② 재측정.
+2. **접촉 자코비안의 반지름 항 누락(다음 스펙으로 이월, 이번엔 미수정).** τ 계산이 구 중심 자코비안 `J`를 쓰지만, 실제 접촉력은 구 중심 − r·n에서 작용한다. 평지에서는 정확하지만 경사에서는 팔 모멘트가 달라져 접선 방향에 ≈10% 오차가 생긴다 — 경사 기준(3)의 접선력 밴드 이탈과 관련 있을 수 있음.
+
+**맥 노트:** `gz sim -s -r`가 아니라 일시정지로 시작하고, 노드가 `start_delay`(3 s) 뒤 `gz service`로 재개한다. GUI는 `legged.launch.py`와 같이 서버·창 분리 기동. IMU orientation은 **초기 자세 기준**(월드 기준 아님) — 스폰이 수평(roll=pitch=0)이어야 하며 현재 corridor의 go2 스폰은 이를 만족한다.
+
 ## 테스트·실험
 
 ```bash
