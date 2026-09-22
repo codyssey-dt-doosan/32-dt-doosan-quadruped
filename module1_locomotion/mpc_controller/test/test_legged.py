@@ -190,3 +190,80 @@ def test_write_legged_assets_writes_converted_files():
 def test_write_legged_assets_unknown_world():
     with pytest.raises(FileNotFoundError):
         write_legged_assets(str(REPO / "simulation"), "no_such_world")
+
+
+from mpc_controller.legged_model import (  # noqa: E402
+    FORCE_CTRL,
+    RAMP_NAME,
+    WRENCH_SYS,
+    force_topic,
+    ramp_spawn_z,
+    ros_force_topic,
+)
+
+CORRIDOR = (REPO / "simulation/worlds/corridor.sdf").read_text(encoding="utf-8")
+
+
+def test_defaults_add_nothing_new():
+    m = make_legged_model(GO2)
+    assert FORCE_CTRL not in m and "<sphere>" not in m
+    w = make_legged_world(CORRIDOR)
+    assert WRENCH_SYS not in w and RAMP_NAME not in w
+    assert len(bridge_entries()) == 12
+
+
+def test_force_plugins_come_after_position_controllers():
+    model = ET.fromstring(make_legged_model(GO2, force_ctrl=True)).find("model")
+    names = [p.get("filename") for p in model.findall("plugin")]
+    assert names.count(FORCE_CTRL) == 12
+    assert max(i for i, n in enumerate(names) if n == POS_CTRL) < min(i for i, n in enumerate(names) if n == FORCE_CTRL)
+    joints = sorted(p.find("joint_name").text for p in model.findall("plugin") if p.get("filename") == FORCE_CTRL)
+    assert joints == sorted(JOINTS)
+
+
+def test_sphere_feet_on_four_calves_with_leg_friction():
+    model = ET.fromstring(make_legged_model(GO2, mu=0.7, foot_r=0.02)).find("model")
+    feet = [c for link in model.findall("link") for c in link.findall("collision") if c.get("name") == "foot"]
+    assert len(feet) == 4
+    for c in feet:
+        assert c.find("pose").text == "0 0 -0.1 0 0 0"
+        assert c.find("geometry/sphere/radius").text == "0.02"
+        assert c.find("surface/friction/ode/mu").text == "0.7"
+
+
+def test_world_wrench_plugin_and_ramp():
+    root = ET.fromstring(make_legged_world(CORRIDOR, wrench=True, ramp_deg=15.0))
+    world = root.find("world")
+    assert any(p.get("filename") == WRENCH_SYS for p in world.findall("plugin"))
+    ramp = next(m for m in world.findall("model") if m.get("name") == RAMP_NAME)
+    x, y, z, roll, pitch, yaw = (float(v) for v in ramp.find("pose").text.split())
+    assert (x, y) == (-20.0, 0.0) and pitch == pytest.approx(-math.radians(15))
+    go2 = next(i for i in world.findall("include") if i.find("uri").text == "model://go2_legged")
+    assert float(go2.find("pose").text.split()[2]) == pytest.approx(ramp_spawn_z(15.0))
+    assert ramp_spawn_z(0.0) == pytest.approx(0.5)  # 판 두께 0.1 위 0.4
+
+
+def test_world_ramp_zero_is_identical_to_default():
+    assert make_legged_world(CORRIDOR, ramp_deg=0.0) == make_legged_world(CORRIDOR)
+
+
+def test_bridge_force_entries():
+    entries = bridge_entries(force=True)
+    assert len(entries) == 24
+    f = [e for e in entries if e["ros_topic_name"].startswith("/legged_force/")]
+    assert len(f) == 12 and f[0]["gz_topic_name"] == force_topic(JOINTS[0]) and f[0]["direction"] == "ROS_TO_GZ"
+    assert ros_force_topic("FL_hip_joint") == "/legged_force/FL_hip_joint"
+
+
+def test_write_legged_assets_passes_options_through():
+    world_file, bridge_yaml, models_dir = write_legged_assets(
+        str(REPO / "simulation"), "corridor", force_ctrl=True, foot_r=0.02, wrench=True, ramp_deg=10.0
+    )
+    try:
+        sdf = Path(models_dir, "go2_legged", "model.sdf").read_text(encoding="utf-8")
+        assert sdf.count(FORCE_CTRL) == 12 and sdf.count("<sphere>") == 4
+        w = Path(world_file).read_text(encoding="utf-8")
+        assert WRENCH_SYS in w and RAMP_NAME in w
+        assert len(yaml.safe_load(Path(bridge_yaml).read_text(encoding="utf-8"))) == 24
+    finally:
+        shutil.rmtree(os.path.dirname(world_file))
