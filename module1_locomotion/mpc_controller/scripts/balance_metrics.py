@@ -36,6 +36,7 @@ def parse_feet(text: str) -> list:
         (bx, by, bz), bq = poses["go2"]
         w, x, y, z = bq
         tilt = math.degrees(math.acos(max(-1.0, min(1.0, 1 - 2 * (x * x + y * y)))))
+        # ROS/표준 ZYX pitch(REP-103): 양수 = 코 숙임(nose down), x-forward z-up. 오르막 +x라 지형 평행 자세는 코 들기 = 음수
         pitch = math.degrees(math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x)))))
         yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
         feet = {}
@@ -53,10 +54,14 @@ def log_stats(path: str) -> dict:
     lines = [l for l in all_lines if "status mode=" in l]
     if not lines:
         return {}
-    m = re.search(r"mode=(\w+) qp_ms=([\d.]+)/([\d.]+) fail=(\d+) sat=(\d+) sum_fz=([-\d.]+)", lines[-1])
+    m = re.search(
+        r"mode=(\w+) qp_ms=([\d.]+)/([\d.]+) fail=(\d+) sat=(\d+) sum_fz=([-\d.]+) sum_fn=([-\d.]+) sum_ft=([-\d.]+)",
+        lines[-1],
+    )
     return {
         "mode": m.group(1), "qp_ms": float(m.group(2)), "qp_p99": float(m.group(3)), "fail": int(m.group(4)),
-        "sat": int(m.group(5)), "sum_fz": float(m.group(6)), "hold": hold,
+        "sat": int(m.group(5)), "sum_fz": float(m.group(6)), "sum_fn": float(m.group(7)), "sum_ft": float(m.group(8)),
+        "hold": hold,
     }
 
 
@@ -107,7 +112,9 @@ def main() -> int:
         out += f" xy_exc_cm={exc * 100:.1f} recover_s={rec}"
         ok &= tilt < 10.0 and exc < 0.05 and rec is not None and rec < 2.0 and slip < 0.02
     elif a.expect_pitch is not None:
-        ok &= abs(pitch - a.expect_pitch) < 2.0 and slip < 0.02 and abs(st.get("sum_fz", 0) - MG) < 0.05 * MG
+        th = math.radians(abs(a.expect_pitch))
+        ok &= abs(pitch - a.expect_pitch) < 2.0 and slip < 0.02
+        ok &= abs(st.get("sum_fn", 0) - MG * math.cos(th)) < 0.05 * MG and abs(abs(st.get("sum_ft", 0)) - MG * math.sin(th)) < 0.10 * MG
         out += f" expect_pitch={a.expect_pitch}"
     else:
         ok &= z_std < 1e-3 and tilt < 1.0 and drift < 0.01 and abs(st.get("sum_fz", 0) - MG) < 0.05 * MG

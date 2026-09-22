@@ -1,8 +1,13 @@
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from mpc_controller.balance_node import KD_RUN, KD_START, KP_START, blend, gains, joint_torque, q_startup, supervise
 from mpc_controller.leg_kinematics import Q_NOM
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 
 def test_blend_is_zero_then_smooth_then_one():
@@ -45,6 +50,15 @@ def test_feedforward_torque_virtual_work_sign():
     assert np.allclose(-J.T @ np.zeros(3), 0.0)
     up = -J.T @ np.array([0.0, 0.0, 32.3])
     assert up[2] > 0 and abs(up[1]) < 0.1  # 기립: calf +2.5 N·m, thigh ≈ 0 (스파이크)
+
+
+def test_log_stats_parses_status_line(tmp_path):
+    from balance_metrics import log_stats  # scripts/ 경로는 conftest 없이 sys.path에 추가
+
+    p = tmp_path / "x.log"
+    p.write_text("[INFO] status mode=run qp_ms=0.31/0.80 fail=0 sat=0 sum_fz=129.1 sum_fn=125.0 sum_ft=-33.5 tilt=15.02\n")
+    st = log_stats(str(p))
+    assert st["mode"] == "run" and st["qp_ms"] == 0.31 and st["sum_fn"] == 125.0 and st["hold"] == 0
 
 
 def test_supervise():

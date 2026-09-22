@@ -90,7 +90,7 @@ class BalanceNode(Node):
         self.qp_fail_since = None
         self.tilt_deg = 0.0
         self.mode = "run"
-        self.stats = {"qp_ms": [], "fail": 0, "sat": 0, "sum_fz": 0.0}
+        self.stats = {"qp_ms": [], "fail": 0, "sat": 0, "sum_fz": 0.0, "sum_fn": 0.0, "sum_ft": 0.0}
         self.pubs = [self.create_publisher(Float64, ros_force_topic(j), 10) for j in JOINTS]
         self.create_subscription(JointState, "/joint_states", self._joint_cb, 10)
         self.create_subscription(Imu, "/imu", self._imu_cb, 10)
@@ -173,6 +173,9 @@ class BalanceNode(Node):
             self.qp_fail_since = None
             self.f_prev = f
             self.stats["sum_fz"] = float(f[2::3].sum())
+            fm = f.reshape(4, 3)
+            self.stats["sum_fn"] = float((fm @ est.n).sum())
+            self.stats["sum_ft"] = float((fm @ est.t1).sum())
             f_B = (R.T @ f.reshape(4, 3).T).T
             self.tau_ff = np.concatenate([-est.J[i].T @ f_B[i] for i in range(4)])
         self._check_mode()
@@ -193,7 +196,8 @@ class BalanceNode(Node):
         ms = self.stats["qp_ms"][-200:]
         self.get_logger().info(
             f"status mode={self.mode} qp_ms={np.mean(ms) if ms else 0:.2f}/{np.percentile(ms, 99) if ms else 0:.2f} "
-            f"fail={self.stats['fail']} sat={self.stats['sat']} sum_fz={self.stats['sum_fz']:.1f} tilt={self.tilt_deg:.2f}"
+            f"fail={self.stats['fail']} sat={self.stats['sat']} sum_fz={self.stats['sum_fz']:.1f} "
+            f"sum_fn={self.stats.get('sum_fn', 0):.1f} sum_ft={self.stats.get('sum_ft', 0):.1f} tilt={self.tilt_deg:.2f}"
         )
 
 
