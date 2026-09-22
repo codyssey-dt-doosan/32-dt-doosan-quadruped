@@ -231,6 +231,14 @@ def test_sphere_feet_on_four_calves_with_leg_friction():
         assert c.find("surface/friction/ode/mu").text == "0.7"
 
 
+def test_joint_damping_override_only_when_asked():
+    """damping 1.0은 gz-sim 8.6/DART에서 정지 상태에도 calf ≈1 N·m를 먹어 힘 제어를 깨뜨림 — 옵트인으로만 0."""
+    kept = ET.fromstring(make_legged_model(GO2)).find("model")
+    assert {j.find("axis/dynamics/damping").text for j in kept.findall("joint")} == {"1.0"}
+    zeroed = ET.fromstring(make_legged_model(GO2, damping=0.0)).find("model")
+    assert [j.find("axis/dynamics/damping").text for j in zeroed.findall("joint")] == ["0.0"] * 12
+
+
 def test_world_wrench_plugin_and_ramp():
     root = ET.fromstring(make_legged_world(CORRIDOR, wrench=True, ramp_deg=15.0))
     world = root.find("world")

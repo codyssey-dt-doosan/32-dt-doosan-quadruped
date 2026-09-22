@@ -20,8 +20,9 @@ def _launch_setup(context, *args, **kwargs):
     mu, ramp_deg = float(cfg("mu")), float(cfg("ramp_deg"))
     sim_share = get_package_share_directory("simulation")
     # 위치 컨트롤러 게인 0 = 노드가 토크 전부 계산. 절충안(gz PD + τ_ff)으로 후퇴하려면 p_gain·d_gain만 올린다
+    # 관절 damping 0: 1.0이면 DART가 정지 상태에도 토크를 먹어 무릎이 한계까지 접힘(감쇠는 노드 Kd_j가 맡음)
     world_file, legged_yaml, legged_models = write_legged_assets(
-        sim_share, world, mu, 0.0, 0.0, force_ctrl=True, foot_r=0.02, wrench=True, ramp_deg=ramp_deg
+        sim_share, world, mu, 0.0, 0.0, force_ctrl=True, foot_r=0.02, wrench=True, ramp_deg=ramp_deg, damping=0.0
     )
     split_gui = gui and sys.platform == "darwin"
     gz_args = f"{world_file}" if gui and not split_gui else f"-s {world_file}"  # -r 없음: 일시정지 시작

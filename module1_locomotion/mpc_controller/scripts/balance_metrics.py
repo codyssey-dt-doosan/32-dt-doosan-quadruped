@@ -69,8 +69,10 @@ def log_stats(path: str) -> dict:
 def _push(world: str, newton: float, seconds: float) -> None:
     time.sleep(2.0)
     ent = 'entity: {name: "go2::base_link", type: LINK}'  # Task 1 Step 3에서 확인한 형태로
-    subprocess.run(["gz", "topic", "-t", f"/world/{world}/wrench/persistent", "-m", "gz.msgs.EntityWrench",
-                    "-p", f"{ent}, wrench: {{force: {{y: {newton}}}}}"], capture_output=True)
+    for _ in range(2):  # gz topic -p는 부하 중 디스커버리 실패로 rc 0인데 미전달될 때가 있어 두 번(멱등)
+        subprocess.run(["gz", "topic", "-t", f"/world/{world}/wrench/persistent", "-m", "gz.msgs.EntityWrench",
+                        "-p", f"{ent}, wrench: {{force: {{y: {newton}}}}}"], capture_output=True)
+        time.sleep(0.3)
     time.sleep(seconds)
     subprocess.run(["gz", "topic", "-t", f"/world/{world}/wrench/clear", "-m", "gz.msgs.Entity",
                     "-p", 'name: "go2::base_link", type: LINK'], capture_output=True)

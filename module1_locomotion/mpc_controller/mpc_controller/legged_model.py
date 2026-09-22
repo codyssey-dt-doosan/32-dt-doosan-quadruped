@@ -50,8 +50,13 @@ def make_legged_model(
     *,
     force_ctrl: bool = False,
     foot_r: float = 0.0,
+    damping: float | None = None,
 ) -> str:
-    """VelocityControl 제거, 관절별 위치 컨트롤러 12개, 다리 마찰 복원, 관절 스프링 제거."""
+    """VelocityControl 제거, 관절별 위치 컨트롤러 12개, 다리 마찰 복원, 관절 스프링 제거.
+
+    damping은 None이면 원본(1.0) 유지. 힘 제어(balance)는 0.0 — gz-sim 8.6/DART가 정지 상태에도 감쇠 토크를
+    먹어(calf ≈1 N·m) τ=−Jᵀf가 30% 부족해지고 무릎이 한계까지 접힘(2026-09-22 스파이크).
+    """
     root = ET.fromstring(sdf_text)
     model = root.find("model")
     plugins = model.findall("plugin")
@@ -68,6 +73,8 @@ def make_legged_model(
             el = dyn.find(tag) if dyn is not None else None
             if el is not None:
                 dyn.remove(el)
+        if damping is not None:
+            dyn.find("damping").text = str(damping)
         # 다중 <joint_name>은 첫 관절만 피드백하므로 관절마다 플러그인 하나
         ctrl = ET.SubElement(model, "plugin", filename=POS_CTRL, name="gz::sim::systems::JointPositionController")
         for tag, text in (
@@ -167,6 +174,7 @@ def write_legged_assets(
     foot_r: float = 0.0,
     wrench: bool = False,
     ramp_deg: float = 0.0,
+    damping: float | None = None,
 ) -> tuple:
     """변환한 모델·월드·브리지 yaml을 임시 dir에 쓰고 (world_file, bridge_yaml, models_dir)를 돌려준다.
 
@@ -179,7 +187,7 @@ def write_legged_assets(
             return f.read()
 
     model_sdf = make_legged_model(
-        read("models", "go2", "model.sdf"), mu, p_gain, d_gain, force_ctrl=force_ctrl, foot_r=foot_r
+        read("models", "go2", "model.sdf"), mu, p_gain, d_gain, force_ctrl=force_ctrl, foot_r=foot_r, damping=damping
     )
     world_sdf = make_legged_world(read("worlds", f"{world}.sdf"), wrench=wrench, ramp_deg=ramp_deg)
     # ponytail: 실행마다 임시 dir 하나가 남는다(수십 KB). 거슬리면 런치 종료 핸들러에서 삭제
