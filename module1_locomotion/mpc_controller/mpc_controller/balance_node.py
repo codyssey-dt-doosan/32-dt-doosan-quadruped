@@ -63,7 +63,7 @@ class BalanceNode(Node):
                 ("mass", 13.2),
                 ("inertia", [0.22, 0.48, 0.58]),
                 ("com_offset", [0.0, 0.0, -0.04]),
-                ("height", 0.28),
+                ("height", 0.266),
                 ("com_shift", 1.0),
                 ("kp_pos", [50.0, 50.0, 100.0]),
                 ("kd_pos", [5.0, 5.0, 10.0]),
