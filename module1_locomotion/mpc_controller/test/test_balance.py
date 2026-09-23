@@ -74,3 +74,10 @@ def test_supervise():
     assert supervise(0.0, 46.0, 0.01, 0.001) == "hold"
     assert supervise(0.0, 1.0, 0.2, 0.001) == "hold"
     assert supervise(0.0, 1.0, 0.01, 0.2) == "hold"
+
+
+def test_gz_unpause_returns_error_string_when_gz_missing(monkeypatch):
+    from mpc_controller import balance_node
+
+    monkeypatch.setattr(balance_node.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("no gz")))
+    assert "no gz" in balance_node.gz_unpause("corridor")

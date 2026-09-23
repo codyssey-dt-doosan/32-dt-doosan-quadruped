@@ -13,7 +13,8 @@ from mpc_controller.force_qp import ForceQP, _csc_with_pattern, _Solver, cone_ma
 
 N_X, N_U, N_C = 13, 12, 20
 G = 9.8
-Q_DEFAULT = np.array([50.0, 50.0, 10.0, 1.0, 1.0, 50.0, 1.0, 1.0, 1.0, 5.0, 5.0, 1.0, 0.0])
+Q_DEFAULT = np.array([50.0, 50.0, 10.0, 20.0, 20.0, 50.0, 1.0, 1.0, 1.0, 0.5, 0.5, 1.0, 0.0])
+# p_xy 20·v_xy 0.5: balance_node 등가 강성·감쇠(Kp 50·Kd 5)에 맞춘 값 — v 5는 0.3 m/s 오차에 측력 80 N·Σf_z 162(점프)를 요구해 20 N 밀기에 전도(실측), p 1은 4 cm 오차에 0.8 N뿐이라 크리프(실측)
 
 
 def rotz(psi: float) -> np.ndarray:

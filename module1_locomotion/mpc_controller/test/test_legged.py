@@ -275,3 +275,31 @@ def test_write_legged_assets_passes_options_through():
         assert len(yaml.safe_load(Path(bridge_yaml).read_text(encoding="utf-8"))) == 24
     finally:
         shutil.rmtree(os.path.dirname(world_file))
+
+
+def test_slope_boxes_geometry():
+    from mpc_controller.legged_model import SLOPE_FLAT, SLOPE_T, slope_boxes
+
+    th = math.radians(20)
+    up, flat, down = slope_boxes(-18.0, 20.0, 3.0)
+    assert up[0] == "walk_slope_up" and up[2] == pytest.approx(-th) and up[3] == 3.0
+    assert up[1][0] == pytest.approx(-18.0 + 1.5 * math.cos(th) + SLOPE_T / 2 * math.sin(th))
+    assert up[1][2] == pytest.approx(1.5 * math.sin(th) - SLOPE_T / 2 * math.cos(th))
+    x1 = -18.0 + 3.0 * math.cos(th)
+    assert flat[1] == pytest.approx((x1 + SLOPE_FLAT / 2, 0.0, 3.0 * math.sin(th) - SLOPE_T / 2)) and flat[2] == 0.0
+    assert down[2] == pytest.approx(th) and down[1][0] == pytest.approx(x1 + SLOPE_FLAT + 1.5 * math.cos(th) - SLOPE_T / 2 * math.sin(th))
+
+
+def test_world_slope_adds_three_static_boxes_two_metres_ahead():
+    root = ET.fromstring(make_legged_world(CORRIDOR, slope_deg=15.0, slope_len=3.0))
+    world = root.find("world")
+    boxes = [m for m in world.findall("model") if m.get("name", "").startswith("walk_slope_")]
+    assert [m.get("name") for m in boxes] == ["walk_slope_up", "walk_slope_flat", "walk_slope_down"]
+    assert all(m.find("static").text == "true" for m in boxes)
+    x = float(boxes[0].find("pose").text.split()[0])
+    assert x == pytest.approx(-20.0 + 2.0 + 1.5 * math.cos(math.radians(15)) + 0.05 * math.sin(math.radians(15)))
+    size = boxes[1].find("link/collision/geometry/box/size").text.split()
+    assert size == ["2.0", "3.4", "0.1"]
+    assert make_legged_world(CORRIDOR, slope_deg=0.0) == make_legged_world(CORRIDOR)
+    with pytest.raises(ValueError):
+        make_legged_world(CORRIDOR, slope_deg=15.0, ramp_deg=15.0)

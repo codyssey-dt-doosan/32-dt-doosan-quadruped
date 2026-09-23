@@ -26,6 +26,7 @@ setup(
             "leg_animation_node = mpc_controller.leg_animation_node:main",
             "gait_node = mpc_controller.gait_node:main",
             "balance_node = mpc_controller.balance_node:main",
+            "walk_node = mpc_controller.walk_node:main",
         ],
     },
 )

@@ -50,6 +50,19 @@ def joint_torque(lam, kp, kd, q_des, q, qd, tau_ff, tau_max=TAU_MAX) -> np.ndarr
     return np.clip(kp * (q_des - q) - kd * qd + lam * np.asarray(tau_ff), -tau_max, tau_max)
 
 
+def gz_unpause(world: str):
+    """/world/<w>/control pause:false. 실패면 오류 문자열, 성공이면 None."""
+    cmd = [
+        "gz", "service", "-s", f"/world/{world}/control", "--reqtype", "gz.msgs.WorldControl",
+        "--reptype", "gz.msgs.Boolean", "--timeout", "3000", "--req", "pause: false",
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5.0)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return str(e)
+    return None if r.returncode == 0 else f"rc={r.returncode} out={r.stdout.strip()} err={r.stderr.strip()}"
+
+
 class BalanceNode(Node):
     def __init__(self) -> None:
         super().__init__("balance")
@@ -100,19 +113,11 @@ class BalanceNode(Node):
 
     # ---- 시뮬 재개 (fall_recovery.reset_pose와 같은 subprocess 방식) ----
     def _unpause(self) -> None:
-        cmd = [
-            "gz", "service", "-s", f"/world/{self.p['world']}/control", "--reqtype", "gz.msgs.WorldControl",
-            "--reptype", "gz.msgs.Boolean", "--timeout", "3000", "--req", "pause: false",
-        ]
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=5.0)
-        except (subprocess.TimeoutExpired, OSError) as e:
-            self.get_logger().error(f"gz 재개 실패: {e}")
-            return
-        if r.returncode != 0:
-            self.get_logger().error(f"gz 재개 실패: rc={r.returncode} out={r.stdout.strip()} err={r.stderr.strip()}")
-            return
-        self.get_logger().info("gz 재개")
+        err = gz_unpause(self.p["world"])
+        if err:
+            self.get_logger().error(f"gz 재개 실패: {err}")
+        else:
+            self.get_logger().info("gz 재개")
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9

@@ -17,6 +17,7 @@ WRENCH_SYS = "gz-sim-apply-link-wrench-system"
 RAMP_NAME = "balance_ramp"
 RAMP_SIZE, RAMP_T = 3.0, 0.1
 SPAWN_CLEARANCE = 0.4  # go2 기본 스폰 z와 같음
+SLOPE_W, SLOPE_T, SLOPE_FLAT, SLOPE_ENTRY = 3.4, 0.1, 2.0, 2.0
 MODEL_CONFIG = (
     '<?xml version="1.0"?><model><name>go2_legged</name><version>1.0</version>'
     '<sdf version="1.10">model.sdf</sdf></model>'
@@ -110,7 +111,30 @@ def make_legged_model(
     return ET.tostring(root, encoding="unicode")
 
 
-def make_legged_world(world_text: str, *, wrench: bool = False, ramp_deg: float = 0.0) -> str:
+def slope_boxes(x0: float, deg: float, L: float) -> list:
+    """오르막 L → 평지 SLOPE_FLAT → 내리막 L. 판 두께 T. (경사 스파이크 재현식.) 반환 (name, (x,y,z), pitch, length)."""
+    th = math.radians(deg)
+    c, s, T = math.cos(th), math.sin(th), SLOPE_T
+    x1 = x0 + L * c
+    x2 = x1 + SLOPE_FLAT
+    return [
+        ("walk_slope_up", (x0 + L / 2 * c + T / 2 * s, 0.0, L / 2 * s - T / 2 * c), -th, L),
+        ("walk_slope_flat", (x1 + SLOPE_FLAT / 2, 0.0, L * s - T / 2), 0.0, SLOPE_FLAT),
+        ("walk_slope_down", (x2 + L / 2 * c - T / 2 * s, 0.0, L / 2 * s - T / 2 * c), th, L),
+    ]
+
+
+def _static_box(name: str, pose: tuple, pitch: float, size: tuple) -> ET.Element:
+    x, y, z = pose
+    sz = " ".join(str(v) for v in size)
+    return ET.fromstring(
+        f'<model name="{name}"><static>true</static><pose>{x:.6f} {y:.6f} {z:.6f} 0 {pitch:.8f} 0</pose>'
+        f'<link name="link"><collision name="c"><geometry><box><size>{sz}</size></box></geometry></collision>'
+        f'<visual name="v"><geometry><box><size>{sz}</size></box></geometry></visual></link></model>'
+    )
+
+
+def make_legged_world(world_text: str, *, wrench: bool = False, ramp_deg: float = 0.0, slope_deg: float = 0.0, slope_len: float = 3.0) -> str:
     """월드의 model://go2 include를 model://go2_legged로. include 이름(go2)은 유지 → 토픽명 불변."""
     root = ET.fromstring(world_text)
     uris = [u for u in root.iter("uri") if (u.text or "").strip() == "model://go2"]
@@ -134,6 +158,13 @@ def make_legged_world(world_text: str, *, wrench: bool = False, ramp_deg: float 
                 "</box></geometry></visual></link></model>"
             )
         )
+    if slope_deg:
+        if ramp_deg:
+            raise ValueError("slope_deg와 ramp_deg는 같이 쓸 수 없다")
+        include = next(i for i in world.findall("include") if i.find("uri") is uris[0])
+        x0 = float(include.find("pose").text.split()[0]) + SLOPE_ENTRY
+        for name, pose, pitch, length in slope_boxes(x0, slope_deg, slope_len):
+            world.append(_static_box(name, pose, pitch, (length, SLOPE_W, SLOPE_T)))
     return ET.tostring(root, encoding="unicode")
 
 
@@ -175,6 +206,8 @@ def write_legged_assets(
     wrench: bool = False,
     ramp_deg: float = 0.0,
     damping: float | None = None,
+    slope_deg: float = 0.0,
+    slope_len: float = 3.0,
 ) -> tuple:
     """변환한 모델·월드·브리지 yaml을 임시 dir에 쓰고 (world_file, bridge_yaml, models_dir)를 돌려준다.
 
@@ -189,7 +222,7 @@ def write_legged_assets(
     model_sdf = make_legged_model(
         read("models", "go2", "model.sdf"), mu, p_gain, d_gain, force_ctrl=force_ctrl, foot_r=foot_r, damping=damping
     )
-    world_sdf = make_legged_world(read("worlds", f"{world}.sdf"), wrench=wrench, ramp_deg=ramp_deg)
+    world_sdf = make_legged_world(read("worlds", f"{world}.sdf"), wrench=wrench, ramp_deg=ramp_deg, slope_deg=slope_deg, slope_len=slope_len)
     # ponytail: 실행마다 임시 dir 하나가 남는다(수십 KB). 거슬리면 런치 종료 핸들러에서 삭제
     out = tempfile.mkdtemp(prefix="go2_legged_")
     models_dir = os.path.join(out, "models")
