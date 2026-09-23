@@ -56,10 +56,10 @@ def _csc_with_pattern(dense: np.ndarray, rows, cols) -> sp.csc_matrix:
 class _Solver:
     """osqp 호출을 한 곳에 — Task 1에서 확인한 API 이름으로 맞춘다."""
 
-    def __init__(self, P: sp.csc_matrix, q, A: sp.csc_matrix, l, u):
+    def __init__(self, P: sp.csc_matrix, q, A: sp.csc_matrix, l, u, *, eps: float = 1e-9, max_iter: int = 4000):
         self.prob = osqp.OSQP()
-        # 테스트 케이스들은 100~200 iter에서 수렴(eps_abs=eps_rel=1e-9) — max_iter=4000은 20배 여유. 실시간 루프 p99는 Task 7에서 측정.
-        self.prob.setup(P, q, A, l, u, verbose=False, warm_starting=True, eps_abs=1e-9, eps_rel=1e-9, max_iter=4000)
+        # 1스텝 정적 QP는 100~200 iter에서 1e-9 수렴. 지평 MPC(srb_mpc)는 eps 1e-4 — 정밀도보다 시간이 기준
+        self.prob.setup(P, q, A, l, u, verbose=False, warm_starting=True, eps_abs=eps, eps_rel=eps, max_iter=max_iter)
 
     def update(self, P_x, q, A_x, l, u) -> None:
         self.prob.update(q=q, l=l, u=u, Px=P_x, Ax=A_x)

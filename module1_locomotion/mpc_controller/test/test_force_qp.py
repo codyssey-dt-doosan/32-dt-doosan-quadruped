@@ -96,3 +96,12 @@ def test_wrench_matrix_moment_sign():
     f = np.zeros(12)
     f[2] = 10.0  # FL(+x,+y)에 +z 힘 → 모멘트 r×f = (y·fz, −x·fz, 0)
     assert np.allclose(A @ f, [0, 0, 10, 0.14 * 10, -0.19 * 10, 0])
+
+
+def test_solver_accepts_eps_and_max_iter():
+    from mpc_controller.force_qp import _Solver
+    import scipy.sparse as sp
+
+    P = sp.csc_matrix(2 * np.eye(2))
+    s = _Solver(P, np.array([-2.0, -2.0]), sp.csc_matrix(np.eye(2)), np.zeros(2), np.full(2, 0.5), eps=1e-4, max_iter=200)
+    assert np.allclose(s.solve(), 0.5, atol=1e-3)
