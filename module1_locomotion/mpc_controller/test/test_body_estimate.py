@@ -83,3 +83,44 @@ def test_com_target():
     assert np.allclose(com_target(n, 0.28, 0.0), 0.28 * n)  # 법선 투영
     g = com_target(n, 0.28, 1.0)
     assert g[0] == 0 and g[1] == 0 and g @ n == pytest.approx(0.28)  # 중력 방향 발 중심 위, 법선 거리 유지
+
+
+def test_foot_memory_first_update_and_shift():
+    from mpc_controller.body_estimate import FootMemory
+
+    m = FootMemory()
+    p = np.array([[0.19, 0.14, -0.3], [0.19, -0.14, -0.3], [-0.19, 0.14, -0.3], [-0.19, -0.14, -0.3]])
+    assert np.allclose(m.update(p, np.ones(4, bool), np.zeros(3), 0.0, 0.005), p)
+    # FR·RL 스윙: 몸체가 +x 0.3 m/s로 0.1 s 이동 → 세계 고정점은 몸체 기준 −0.03
+    out = m.update(p + 1.0, np.array([True, False, False, True]), np.array([0.3, 0, 0]), 0.0, 0.1)
+    assert np.allclose(out[0], p[0] + 1.0) and np.allclose(out[3], p[3] + 1.0)
+    assert np.allclose(out[1], p[1] - [0.03, 0, 0]) and np.allclose(out[2], p[2] - [0.03, 0, 0])
+
+
+def test_foot_memory_yaw_rotation_keeps_world_point():
+    from mpc_controller.body_estimate import FootMemory
+
+    m = FootMemory()
+    p = np.array([[1.0, 0.0, 0.0]] * 4)
+    m.update(p, np.ones(4, bool), np.zeros(3), 0.0, 0.01)
+    out = m.update(p, np.zeros(4, bool), np.zeros(3), math.pi / 2, 1.0)  # 몸체가 +90° 회전 → 점은 −90°
+    assert np.allclose(out[0], [0.0, -1.0, 0.0], atol=1e-12)
+
+
+def test_estimate_with_plane_pts_two_feet_matches_four():
+    e4 = estimate(Q12, ZERO12, I3, np.zeros(3), ALL, 0.02, COM)
+    two = np.array([True, False, False, True])
+    assert estimate(Q12, ZERO12, I3, np.zeros(3), two, 0.02, COM) is None  # 현행: 3발 미만 None
+    e2 = estimate(Q12, ZERO12, I3, np.zeros(3), two, 0.02, COM, plane_pts=e4.p)
+    assert np.allclose(e2.n, e4.n) and np.allclose(e2.x, e4.x) and np.allclose(e2.R_des, e4.R_des)
+    assert np.allclose(e2.p, e4.p) and np.allclose(e2.r, e4.r)
+
+
+def test_estimate_velocity_from_single_contact_foot():
+    qd = np.zeros(12)
+    qd[1] = 0.5  # FL thigh만 회전
+    one = np.array([True, False, False, False])
+    e4 = estimate(Q12, ZERO12, I3, np.zeros(3), ALL, 0.02, COM)
+    e = estimate(Q12, qd, I3, np.zeros(3), one, 0.02, COM, plane_pts=e4.p)
+    assert np.allclose(e.v, -jacobian("FL", Q_NOM) @ qd[:3])
+    assert estimate(Q12, qd, I3, np.zeros(3), np.zeros(4, bool), 0.02, COM, plane_pts=e4.p) is None

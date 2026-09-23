@@ -47,19 +47,42 @@ def com_target(n, height: float, com_shift: float) -> np.ndarray:
     return (1.0 - com_shift) * height * n + com_shift * np.array([0.0, 0.0, height / n[2]])
 
 
-def estimate(q12, qd12, R_GB, omega_B, contact, foot_r: float, com_offset_B):
+class FootMemory:
+    """발마다 마지막 접촉점(G, 몸체 원점 기준). 비접촉 발은 몸체 이동·yaw 회전만큼 되돌려 세계 고정점을 유지한다.
+
+    G가 매 틱 yaw를 제거하므로 세계 고정점의 G 좌표는 Rz(−ω_z dt)(p − v dt)로 바뀐다. 스윙 ≤0.17 s라 적분 오차 mm.
+    """
+
+    def __init__(self) -> None:
+        self.p = None
+
+    def update(self, p_G, contact, v_G, wz: float, dt: float) -> np.ndarray:
+        p_G, contact = np.asarray(p_G, float), np.asarray(contact, bool)
+        if self.p is None:
+            self.p = p_G.copy()
+            return self.p
+        c, s = math.cos(-wz * dt), math.sin(-wz * dt)
+        Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+        moved = (Rz @ (self.p - np.asarray(v_G, float) * dt).T).T
+        self.p = np.where(contact[:, None], p_G, moved)
+        return self.p
+
+
+def estimate(q12, qd12, R_GB, omega_B, contact, foot_r: float, com_offset_B, plane_pts=None):
     q12, qd12, R, w_B = (np.asarray(a, float) for a in (q12, qd12, R_GB, omega_B))
     idx = [i for i, on in enumerate(contact) if on]
-    if len(idx) < 3:
+    if len(idx) < (1 if plane_pts is not None else 3):
         return None
     c_B = np.array([foot_pos(leg, q12[3 * i : 3 * i + 3]) for i, leg in enumerate(LEGS)])
     J = np.array([jacobian(leg, q12[3 * i : 3 * i + 3]) for i, leg in enumerate(LEGS)])
     centers_G = c_B @ R.T
-    n = terrain_normal(centers_G[idx])
+    plane = np.asarray(plane_pts, float) if plane_pts is not None else None
+    n = terrain_normal(plane if plane is not None else centers_G[idx])
     t1, t2 = tangents(n)
     p = centers_G - foot_r * n
     c_com = R @ np.asarray(com_offset_B, float)
-    x = c_com - p[idx].mean(axis=0)
+    o = plane.mean(axis=0) if plane is not None else p[idx].mean(axis=0)
+    x = c_com - o
     # 발 정지: 0 = v_body + R(J q̇ + ω_B × c_B) → v_com = v_body + ω_G × c_com
     v_body = -np.mean([R @ (J[i] @ qd12[3 * i : 3 * i + 3] + np.cross(w_B, c_B[i])) for i in idx], axis=0)
     v = v_body + np.cross(R @ w_B, c_com)
