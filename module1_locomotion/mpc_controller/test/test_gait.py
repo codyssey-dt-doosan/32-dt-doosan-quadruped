@@ -35,6 +35,17 @@ def test_gait_inactive_is_all_stance_and_stops_only_at_boundary():
     assert g.active and g.phase == pytest.approx(0.53)
 
 
+def test_trusted_excludes_stance_edges():
+    g = Gait(3.0, 0.5)
+    assert g.trusted().all() and not g.active  # 비활성 → 전부 True
+
+    g.tick(0.02, True)  # 위상 0.06 → FL·RR 진행 0.12(<0.15), FR·RL 스윙(진행 >1)
+    assert not g.trusted().any()
+
+    g.tick(0.08, True)  # 위상 0.30 → FL·RR 진행 0.6(지지 중간), FR·RL 여전히 스윙
+    assert np.array_equal(g.trusted(), [True, False, False, True])
+
+
 def test_schedule_and_timing():
     g = Gait(3.0, 0.5)
     g.tick(0.1, True)  # phase 0.3
@@ -76,6 +87,9 @@ def test_raibert_turning_rotates_hip():
 
 def test_swing_foot_endpoints_and_apex():
     a, b = np.array([0.0, 0.0, -0.3]), np.array([0.1, 0.0, -0.3])
-    assert np.allclose(swing_foot(a, b, 0.0, 0.06, Z), a) and np.allclose(swing_foot(a, b, 1.0, 0.06, Z), b)
-    mid = swing_foot(a, b, 0.5, 0.06, Z)
+    assert np.allclose(swing_foot(a, b, 0.0, 0.06, Z), a)
+    assert np.allclose(swing_foot(a, b, 0.85, 0.06, Z), b)  # land_at: 정확히 착지
+    assert np.allclose(swing_foot(a, b, 1.0, 0.06, Z), b - 0.01 * Z)  # 착지 후 push만큼 눌러 내림
+    mid = swing_foot(a, b, 0.425, 0.06, Z)  # land_at의 절반 위상 → 궤적 중간(정점)
     assert mid[0] == pytest.approx(0.05) and mid[2] == pytest.approx(-0.3 + 0.06)
+    assert swing_foot(a, b, 0.95, 0.06, Z)[2] < b[2]

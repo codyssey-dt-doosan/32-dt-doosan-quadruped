@@ -1,3 +1,4 @@
+import math
 import sys
 from pathlib import Path
 
@@ -81,3 +82,100 @@ def test_gz_unpause_returns_error_string_when_gz_missing(monkeypatch):
 
     monkeypatch.setattr(balance_node.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("no gz")))
     assert "no gz" in balance_node.gz_unpause("corridor")
+
+
+def test_walk_metrics_velocity_track_and_log(tmp_path):
+    from walk_metrics import log_stats, velocity_track
+
+    rows = [(0.3 * t, 0.0, 0.3, 1.0, 0.0, 0.0, {}, t) for t in np.arange(0, 10, 0.1)]  # +x 0.3 m/s, yaw 0
+    m = velocity_track(rows, 0.3, 0.0, after=2.0)
+    assert m["v_meas"] == pytest.approx(0.3, abs=1e-6) and m["w_meas"] == pytest.approx(0.0, abs=1e-6)
+    # z_std: 80개 동일값 0.3의 분산 계산도 이 환경(파이썬 3.11) 부동소수 누적합이 정확히 24.0이 아니어서(24.000000000000036)
+    # 결과가 정확히 0.0이 아니라 ~4.4e-16으로 나온다 — 브리프의 `== 0.0`은 부동소수 노이즈를 못 견뎌 근사로 고침(진짜 결함 시엔 여전히 실패)
+    assert m["err_v"] == pytest.approx(0.0, abs=1e-6) and m["tilt_max"] == 1.0 and m["z_std"] == pytest.approx(0.0, abs=1e-9)
+    rows = [(0.0, 0.0, 0.3, 0.0, 0.0, math.degrees(0.5 * t), {}, t) for t in np.arange(0, 10, 0.1)]
+    assert velocity_track(rows, 0.0, 0.5, after=2.0)["w_meas"] == pytest.approx(0.5, abs=1e-6)
+
+    p = tmp_path / "walk.log"
+    p.write_text(
+        "[INFO] status mode=run qp_ms=1.7/2.3 fail=3 sat=0 sum_fz=134.8 sum_fn=0.0 sum_ft=0.0 calf_min=-1.124 "
+        "tilt=0.24 ik_fail=0 ik_clamp=5 phase=0.96 active=1 v_cmd=0.30 w_cmd=0.00 v_est_max=0.41\n"
+    )
+    st = log_stats(str(p))
+    assert st["ik_fail"] == 0 and st["ik_clamp"] == 5 and st["active"] == 1 and st["hold"] == 0
+
+
+def test_swing_targets_reachable_on_slope():
+    """스펙 §7: 15° 오르막·v 0.3·height 0.32에서 스윙 발 IK 목표가 관절 한계 안(실패 0). 보행 중 접촉 침투로 1.5 cm 가라앉아도(z −0.325) 도달."""
+    from scipy.spatial.transform import Rotation
+
+    from mpc_controller.body_estimate import estimate
+    from mpc_controller.gait import Gait
+    from mpc_controller.leg_kinematics import HIP, HIP_Y, SIDE
+    from mpc_controller.leg_kinematics import ik as leg_ik
+    from mpc_controller.legged_model import LEGS
+    from mpc_controller.walk_node import swing_targets
+
+    zero12 = np.zeros(12)
+    q12 = np.concatenate([leg_ik(leg, [HIP[leg][0], HIP[leg][1] + SIDE[leg] * HIP_Y, -0.34]) for leg in LEGS])
+    R = Rotation.from_euler("y", -math.radians(15)).as_matrix()  # 오르막 지형 평행(코 들기)
+    e = estimate(q12, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
+    g = Gait(3.0, 0.5)
+    g.tick(0.25, True)  # 위상 0.75 → FL·RR 스윙 중간
+    q_sw, p_land, fails, _, _ = swing_targets(g, e, R, 0.3 * e.R_des[:, 0], 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
+    assert fails == 0 and not np.allclose(q_sw[:3], q12[:3]) and np.allclose(q_sw[3:6], q12[3:6])
+    assert p_land[0][0] > e.p[0][0]  # 전진 → 앞 착지
+
+    q12_sunk = np.concatenate([leg_ik(leg, [HIP[leg][0], HIP[leg][1] + SIDE[leg] * HIP_Y, -0.325]) for leg in LEGS])
+    e_sunk = estimate(q12_sunk, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
+    _, _, fails_sunk, _, _ = swing_targets(g, e_sunk, R, 0.3 * e_sunk.R_des[:, 0], 0.0, e_sunk.p, 0.02, 0.025, 0.03, 0.08, q12_sunk, g.contact())
+    assert fails_sunk == 0
+
+    # 5차 실측 진단: lift 0.15(도달 불가)는 이제 hold 대신 ik_clamped가 흡수 — fails 0·clamps > 0이어야 한다
+    _, _, fails_bad, clamps_bad, _ = swing_targets(g, e, R, 0.3 * e.R_des[:, 0], 0.0, e.p, 0.02, 0.15, 0.03, 0.08, q12, g.contact())
+    assert fails_bad == 0 and clamps_bad > 0
+
+
+def test_swing_targets_reachable_flat_fast():
+    """평지·빠른 이동(v 0.5·w 1.0)에서도 스윙 발 IK 목표가 관절 한계 안(실패 0). 1.5 cm 가라앉아도(z −0.325) 도달."""
+    from mpc_controller.body_estimate import estimate
+    from mpc_controller.gait import Gait
+    from mpc_controller.leg_kinematics import HIP, HIP_Y, SIDE
+    from mpc_controller.leg_kinematics import ik as leg_ik
+    from mpc_controller.legged_model import LEGS
+    from mpc_controller.walk_node import swing_targets
+
+    zero12 = np.zeros(12)
+    q12 = np.concatenate([leg_ik(leg, [HIP[leg][0], HIP[leg][1] + SIDE[leg] * HIP_Y, -0.34]) for leg in LEGS])
+    R = np.eye(3)
+    e = estimate(q12, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
+    g = Gait(3.0, 0.5)
+    g.tick(0.25, True)  # 위상 0.75 → FL·RR 스윙 중간
+    _, _, fails, _, _ = swing_targets(g, e, R, 0.5 * e.R_des[:, 0], 1.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
+    assert fails == 0
+
+    q12_sunk = np.concatenate([leg_ik(leg, [HIP[leg][0], HIP[leg][1] + SIDE[leg] * HIP_Y, -0.325]) for leg in LEGS])
+    e_sunk = estimate(q12_sunk, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
+    _, _, fails_sunk, _, _ = swing_targets(g, e_sunk, R, 0.5 * e_sunk.R_des[:, 0], 1.0, e_sunk.p, 0.02, 0.025, 0.03, 0.08, q12_sunk, g.contact())
+    assert fails_sunk == 0
+
+
+def test_swing_targets_land_at_neutral_y_when_still():
+    """실측 결함: 착지 기준이 hip 롤 축(y ±0.10)이면 중립 발 위치(y ±0.14)보다 4 cm 안쪽에 착지 → 무릎 과굴곡. 정지(v=w=0)면 착지점이 곧 기준점이어야 한다."""
+    from mpc_controller.body_estimate import estimate
+    from mpc_controller.gait import Gait
+    from mpc_controller.leg_kinematics import HIP, HIP_Y, SIDE
+    from mpc_controller.leg_kinematics import ik as leg_ik
+    from mpc_controller.legged_model import LEGS
+    from mpc_controller.walk_node import swing_targets
+
+    zero12 = np.zeros(12)
+    q12 = np.concatenate([leg_ik(leg, [HIP[leg][0], HIP[leg][1] + SIDE[leg] * HIP_Y, -0.34]) for leg in LEGS])
+    R = np.eye(3)
+    e = estimate(q12, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
+    g = Gait(3.0, 0.5)
+    g.tick(0.25, True)  # 위상 0.75 → FL·RR 스윙 중간
+    _, p_land, _, _, _ = swing_targets(g, e, R, np.zeros(3), 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
+    assert p_land[0][1] == pytest.approx(0.14, abs=1e-6)
+    assert p_land[0][0] == pytest.approx(0.19, abs=1e-6)
+    assert p_land[3][1] == pytest.approx(-0.14, abs=1e-6)

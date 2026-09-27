@@ -62,6 +62,13 @@ class Gait:
         s = swing_s(self.leg_phase(i), self.duty)
         return 0.0 if s is None else (1.0 - s) * (1.0 - self.duty) / self.hz
 
+    def trusted(self, lo: float = 0.15, hi: float = 0.85) -> np.ndarray:
+        """속도 추정에 믿을 발: 지지 위상 진행이 [lo, hi]인 발(접지 직후·이륙 직전 충격 제외). 비활성이면 전부."""
+        if not self.active:
+            return np.ones(4, bool)
+        prog = np.array([self.leg_phase(i) / self.duty for i in range(4)])
+        return (prog >= lo) & (prog <= hi)
+
 
 def raibert(hip_G, o_G, n_G, v_est, v_ref, w_ref: float, t_rem: float, t_stance: float, k_r: float, step_max: float) -> np.ndarray:
     """착지점(G, 몸체 원점 기준): 착지 시각 hip 예측 + v_est·T_st/2 + k_r(v_est − v_ref), 평면(o, n) 투영, hip 반경 클램프."""
@@ -76,6 +83,13 @@ def raibert(hip_G, o_G, n_G, v_est, v_ref, w_ref: float, t_rem: float, t_stance:
     return p - ((p - o) @ n) * n
 
 
-def swing_foot(p_lift, p_land, s: float, lift: float, n) -> np.ndarray:
+def swing_foot(p_lift, p_land, s: float, lift: float, n, land_at: float = 0.85, push: float = 0.01) -> np.ndarray:
+    """xy·높이 진행은 land_at(기본 0.85)에서 끝낸다(u = min(1, s/land_at)) — 남는 스윙 구간(land_at~1)은 관절 PD가
+    167 ms 스윙을 못 따라가 지연 착지될 때를 대비해 push(기본 1 cm)만큼 더 눌러 접촉을 보장한다. 지연 착지되면
+    스케줄대로 공중 발에 힘이 배정돼 대각 한 발 지지 → 몸체 기움 → 평면 법선 급변 → 연쇄 전도(덤프 실측)."""
     p_lift, p_land, n = (np.asarray(a, float) for a in (p_lift, p_land, n))
-    return p_lift + (p_land - p_lift) * s + lift * math.sin(math.pi * s) * n
+    u = min(1.0, s / land_at)
+    p = p_lift + (p_land - p_lift) * u + lift * math.sin(math.pi * u) * n
+    if s > land_at:
+        p = p - push * (s - land_at) / (1.0 - land_at) * n
+    return p

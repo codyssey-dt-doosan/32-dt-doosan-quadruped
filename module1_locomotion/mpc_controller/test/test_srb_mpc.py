@@ -108,6 +108,26 @@ def test_slope_stand_force_split():
     assert abs((fm @ x_des).sum()) == pytest.approx(M * G * np.sin(th), rel=0.15)
 
 
+def test_set_weights_changes_solution():
+    """set_weights로 v 가중을 올리면(0.5 → 8, 실제 walk_node의 정지/보행 Q 차이) 같은 속도 오차에서 더 강하게 민다."""
+    mpc = SrbMpc(M, np.diag(I_B), 10, 0.03, Q_DEFAULT, 1e-5, 0.5, 2.0, 120.0)
+    X = reference(np.array([0, 0, 0.28]), 0.3, 0.0, I3, Z, 0.28, 10, 0.03)
+    x0 = np.array([0, 0, 0, 0, 0, 0.28, 0, 0, 0, 0, 0, 0, G], float)  # 정지 → 참조는 전진, v 오차 0.3
+    r = np.repeat(R_FEET[None], 10, axis=0)
+    contact = np.ones((10, 4), bool)
+
+    q_lo, q_hi = Q_DEFAULT.copy(), Q_DEFAULT.copy()
+    q_lo[9] = q_lo[10] = 0.5
+    q_hi[9] = q_hi[10] = 8.0
+
+    mpc.set_weights(q_lo)
+    f_lo = mpc.solve(x0, X, r, contact, Z, I3)
+    mpc.set_weights(q_hi)
+    f_hi = mpc.solve(x0, X, r, contact, Z, I3)
+
+    assert abs(f_hi[0::3].sum()) > abs(f_lo[0::3].sum())
+
+
 def test_no_contact_returns_none_and_update_equals_fresh():
     mpc = SrbMpc(M, np.diag(I_B), 4, 0.03, Q_DEFAULT, 1e-5, 0.5, 2.0, 120.0)
     X = stand_ref(4)

@@ -99,6 +99,10 @@ class SrbMpc:
         self._a_rows, self._a_cols = (np.array(v) for v in zip(*blk))
         self._nc = nc
 
+    def set_weights(self, q_weights) -> None:
+        """Qbar만 재구성(패턴 불변) — 정지/보행 등 상황별 가중치 전환용."""
+        self.Qbar = np.diag(np.tile(np.asarray(q_weights, float), self.N))
+
     def _matrices(self, x0, X_ref, r, contact, n, R):
         I_inv = np.linalg.inv(R @ self.I_B @ R.T)
         Ad, Bd0 = discretize(self.A, continuous_B(I_inv, r[0], self.m), self.dt)

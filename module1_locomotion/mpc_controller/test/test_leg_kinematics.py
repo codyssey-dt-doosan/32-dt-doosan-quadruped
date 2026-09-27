@@ -11,6 +11,7 @@ from mpc_controller.leg_kinematics import (
     SIDE,
     foot_pos,
     ik,
+    ik_clamped,
     jacobian,
 )
 from mpc_controller.legged_model import LEGS
@@ -82,6 +83,25 @@ def test_ik_reach_on_15deg_slope_with_com_shift():
     for leg in LEGS:
         p = foot_pos(leg, Q_NOM) - np.array([shift, 0.0, 0.0])  # 몸체가 경사 위쪽(+x)으로 이동 = 발은 −x
         assert ik(leg, p) is not None, leg
+
+
+def test_ik_clamped_pulls_unreachable_targets_inside():
+    """스펙: 스윙 목표가 도달 범위 밖(침하·보폭)이어도 hold 대신 가장 가까운 도달 자세를 쓴다(실측 RL 축-발 0.203 < R_MIN)."""
+    p_reach = foot_pos("FL", Q_NOM)
+    q_ref, clamped_ref = ik_clamped("FL", p_reach)
+    assert clamped_ref is False and q_ref == pytest.approx(ik("FL", p_reach))
+
+    p_near = tuple(np.array(p_reach) + np.array([0.0, 0.0, 0.08]))  # 8 cm 높음 → 축-발 < R_MIN
+    assert ik("FL", p_near) is None
+    q_near, clamped_near = ik_clamped("FL", p_near)
+    assert clamped_near is True and q_near is not None
+    assert all(lo <= v <= hi for v, (lo, hi) in zip(q_near, LIMITS))
+    assert q_near[2] >= LIMITS[2][0]  # calf ≥ −1.57
+
+    p_far = tuple(np.array(p_reach) - np.array([0.15, 0.0, 0.0]))  # 15 cm 멀리 → 축-발 > R_MAX
+    q_far, clamped_far = ik_clamped("FL", p_far)
+    assert clamped_far is True and q_far is not None
+    assert all(lo <= v <= hi for v, (lo, hi) in zip(q_far, LIMITS))
 
 
 def test_contact_jacobian_equals_center_jacobian_for_vertical_force_only():

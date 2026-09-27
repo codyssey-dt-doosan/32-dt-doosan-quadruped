@@ -7,7 +7,7 @@ pytest.importorskip("osqp")
 
 from scipy.spatial.transform import Rotation
 
-from mpc_controller.body_estimate import com_target, estimate, terrain_normal, yaw_aligned
+from mpc_controller.body_estimate import com_target, estimate, terrain_frame, terrain_normal, yaw_aligned
 from mpc_controller.leg_kinematics import FOOT_Z_NOM, Q_NOM, foot_pos, jacobian
 from mpc_controller.legged_model import LEGS
 
@@ -33,12 +33,22 @@ def test_terrain_normal_points_up_and_handles_three_points():
     assert terrain_normal(pts[:2]) is None
 
 
+def test_terrain_frame_identity_and_slope():
+    assert np.allclose(terrain_frame([0.0, 0.0, 1.0]), I3)
+    n = np.array([-math.sin(math.radians(15)), 0.0, math.cos(math.radians(15))])
+    x_des = np.array([n[2], 0.0, -n[0]])
+    x_des /= np.linalg.norm(x_des)
+    expected = np.column_stack([x_des, np.cross(n, x_des), n])
+    assert np.allclose(terrain_frame(n), expected)
+
+
 def test_identity_pose():
     e = estimate(Q12, ZERO12, I3, np.zeros(3), ALL, 0.02, COM)
     assert np.allclose(e.n, [0, 0, 1])
     assert e.x == pytest.approx((0.0, 0.0, -0.04 - (FOOT_Z_NOM - 0.02)), abs=1e-4)  # CoM은 발 접촉면 위 0.2842
     assert np.allclose(e.v, 0.0) and np.allclose(e.R_des, I3)
     assert np.allclose(e.r[0], [0.19, 0.14, FOOT_Z_NOM - 0.02 + 0.04], atol=1e-4)
+    assert np.allclose(e._replace(v=np.array([0.3, 0.0, 0.01])).v, [0.3, 0.0, 0.01])  # /odom 속도 교체(NamedTuple._replace) 동작 확인
 
 
 @pytest.mark.parametrize("euler", [(0.0, 0.25, 0.0), (0.0, 0.0, 0.2), (0.0, -0.15, 0.1)])
@@ -114,6 +124,18 @@ def test_estimate_with_plane_pts_two_feet_matches_four():
     e2 = estimate(Q12, ZERO12, I3, np.zeros(3), two, 0.02, COM, plane_pts=e4.p)
     assert np.allclose(e2.n, e4.n) and np.allclose(e2.x, e4.x) and np.allclose(e2.R_des, e4.R_des)
     assert np.allclose(e2.p, e4.p) and np.allclose(e2.r, e4.r)
+
+
+def test_foot_memory_reset():
+    from mpc_controller.body_estimate import FootMemory
+
+    m = FootMemory()
+    p = np.array([[0.19, 0.14, -0.3], [0.19, -0.14, -0.3], [-0.19, 0.14, -0.3], [-0.19, -0.14, -0.3]])
+    m.update(p, np.ones(4, bool), np.zeros(3), 0.0, 0.005)
+    m.update(p + 1.0, np.array([True, False, False, True]), np.array([0.3, 0, 0]), 0.0, 0.1)  # 평면이 무너진 상태 흉내
+    p2 = np.array([[0.19, 0.14, -0.31], [0.19, -0.14, -0.31], [-0.19, 0.14, -0.31], [-0.19, -0.14, -0.31]])
+    m.reset(p2)
+    assert np.allclose(m.p, p2)
 
 
 def test_estimate_velocity_from_single_contact_foot():

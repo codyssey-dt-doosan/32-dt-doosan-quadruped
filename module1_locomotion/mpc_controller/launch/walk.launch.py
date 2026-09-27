@@ -36,20 +36,36 @@ def _launch_setup(context, *args, **kwargs):
             ("bridge_legged", legged_yaml),
         )
     ]
+    walk_params = {
+        "use_sim_time": True,
+        "world": world,
+        "stride_hz": float(cfg("stride_hz")),
+        "lift": float(cfg("lift")),
+        "k_raibert": float(cfg("k_raibert")),
+        "v_gain": float(cfg("v_gain")),
+    }
+    def parse_q_weights(name):
+        w = [float(v) for v in cfg(name).split(",")]
+        if len(w) != 13:
+            raise ValueError(f"{name}는 13개(rpy3 p3 ω3 v3 g)여야 함: {len(w)}개")
+        return w
+
+    if cfg("q_weights"):
+        walk_params["q_weights"] = parse_q_weights("q_weights")
+    if cfg("q_weights_walk"):
+        walk_params["q_weights_walk"] = parse_q_weights("q_weights_walk")
+    if cfg("alpha"):
+        walk_params["alpha"] = float(cfg("alpha"))
+    if cfg("height"):
+        walk_params["height"] = float(cfg("height"))
+    if cfg("height_walk"):
+        walk_params["height_walk"] = float(cfg("height_walk"))
     walk = Node(
         package="mpc_controller",
         executable="walk_node",
         name="walk",
         output="screen",
-        parameters=[
-            {
-                "use_sim_time": True,
-                "world": world,
-                "stride_hz": float(cfg("stride_hz")),
-                "lift": float(cfg("lift")),
-                "k_raibert": float(cfg("k_raibert")),
-            }
-        ],
+        parameters=[walk_params],
     )
     resource_path = os.pathsep.join([legged_models, os.path.join(sim_share, "models")])
     return [SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", resource_path), gz_sim, *gz_gui, *bridges, walk]
@@ -65,8 +81,14 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("slope_len", default_value="3.0", description="오르막·내리막 길이 m"),
             DeclareLaunchArgument("ramp_deg", default_value="0.0", description="스폰 밑 경사 판(balance와 동일, slope_deg와 배타)"),
             DeclareLaunchArgument("stride_hz", default_value="3.0"),
-            DeclareLaunchArgument("lift", default_value="0.06"),
+            DeclareLaunchArgument("lift", default_value="0.025"),
             DeclareLaunchArgument("k_raibert", default_value="0.03"),
+            DeclareLaunchArgument("v_gain", default_value="1.12", description="전진 보정 손잡이 — MPC 추종이 89%로 일관(실측)"),
+            DeclareLaunchArgument("q_weights", default_value="", description="13개 쉼표 구분(rpy3 p3 ω3 v3 g), 비우면 기본"),
+            DeclareLaunchArgument("q_weights_walk", default_value="", description="보행 중(gait 활성) Q, 13개 쉼표 구분, 비우면 기본"),
+            DeclareLaunchArgument("alpha", default_value="", description="비우면 기본"),
+            DeclareLaunchArgument("height", default_value="", description="정지 목표 높이, 비우면 기본"),
+            DeclareLaunchArgument("height_walk", default_value="", description="보행 목표 높이, 비우면 기본"),
             OpaqueFunction(function=_launch_setup),
         ]
     )

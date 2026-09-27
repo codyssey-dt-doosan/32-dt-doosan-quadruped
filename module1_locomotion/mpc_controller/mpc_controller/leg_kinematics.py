@@ -79,3 +79,30 @@ def ik(leg: str, p_B) -> tuple | None:
     if any(not lo <= v <= hi for v, (lo, hi) in zip(q, LIMITS)):
         return None
     return q
+
+
+R_MAX, R_MIN = L1 + L2 - 1e-3, math.sqrt(L1 * L1 + L2 * L2 + 2 * L1 * L2 * math.cos(LIMITS[2][0])) + 1e-3  # 축-발 도달 범위(calf 한계 기준)
+
+
+def ik_clamped(leg: str, p_B) -> tuple:
+    """ik와 같되 thigh 축 기준 (x, d) 거리를 [R_MIN, R_MAX]로 클램프한 뒤 푼다(gait_node.ik 방식). 반환 (q | None, clamped: bool).
+
+    스윙 목표가 침하·보폭 때문에 도달 밖으로 살짝 나가는 경우 hold로 가지 않고 가장 가까운 자세를 쓴다.
+    """
+    dx, dy, dz = np.asarray(p_B, dtype=float) - (HIP[leg][0], HIP[leg][1], 0.0)
+    ly = SIDE[leg] * HIP_Y
+    rho2 = dy * dy + dz * dz - ly * ly
+    if rho2 <= 0.0:
+        return None, False
+    lz = -math.sqrt(rho2)
+    x, d = dx, HIP_Z - lz
+    r = math.hypot(x, d)
+    rc = min(R_MAX, max(R_MIN, r))
+    if abs(rc - r) < 1e-12:
+        return ik(leg, p_B), False
+    x, d = x * rc / r, d * rc / r
+    lz2 = HIP_Z - d
+    q0 = math.atan2(dz, dy) - math.atan2(lz, ly)
+    # 클램프한 (x, d)를 hip 롤 q0로 되돌려 B 프레임 점으로 만든 뒤 ik
+    p = np.array([HIP[leg][0], HIP[leg][1], 0.0]) + _rx(q0) @ np.array([x, ly, lz2])
+    return ik(leg, p), True

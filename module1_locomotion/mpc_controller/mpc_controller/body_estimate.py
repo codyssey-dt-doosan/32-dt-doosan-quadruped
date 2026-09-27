@@ -41,6 +41,14 @@ def terrain_normal(points_G):
     return n if n[2] > 0 else -n
 
 
+def terrain_frame(n) -> np.ndarray:
+    """지형 법선 n → 지형 평행 목표 자세 R_des(B→G), x축은 헤딩 0(R_des[1,0]=0)인 접선(t1과 다름)."""
+    n = np.asarray(n, float)
+    x_des = np.array([n[2], 0.0, -n[0]])  # 접선 중 수평 헤딩이 0인 방향 (R_des[1,0] = 0)
+    x_des /= np.linalg.norm(x_des)
+    return np.column_stack([x_des, np.cross(n, x_des), n])
+
+
 def com_target(n, height: float, com_shift: float) -> np.ndarray:
     """발 중심 기준 CoM 목표: 법선 거리 height. com_shift 1 = 중력 방향 발 중심 위, 0 = 법선 투영."""
     n = np.asarray(n, float)
@@ -67,6 +75,10 @@ class FootMemory:
         self.p = np.where(contact[:, None], p_G, moved)
         return self.p
 
+    def reset(self, p_G) -> None:
+        """평면이 무너졌을 때(법선이 중력에서 크게 이탈) 현재 FK 접촉점으로 기억을 되돌린다."""
+        self.p = np.asarray(p_G, float).copy()
+
 
 def estimate(q12, qd12, R_GB, omega_B, contact, foot_r: float, com_offset_B, plane_pts=None):
     q12, qd12, R, w_B = (np.asarray(a, float) for a in (q12, qd12, R_GB, omega_B))
@@ -86,7 +98,5 @@ def estimate(q12, qd12, R_GB, omega_B, contact, foot_r: float, com_offset_B, pla
     # 발 정지: 0 = v_body + R(J q̇ + ω_B × c_B) → v_com = v_body + ω_G × c_com
     v_body = -np.mean([R @ (J[i] @ qd12[3 * i : 3 * i + 3] + np.cross(w_B, c_B[i])) for i in idx], axis=0)
     v = v_body + np.cross(R @ w_B, c_com)
-    x_des = np.array([n[2], 0.0, -n[0]])  # 접선 중 수평 헤딩이 0인 방향 (R_des[1,0] = 0)
-    x_des /= np.linalg.norm(x_des)
-    R_des = np.column_stack([x_des, np.cross(n, x_des), n])
+    R_des = terrain_frame(n)
     return Estimate(n, t1, t2, p, p - c_com, x, v, R_des, c_B, J)
