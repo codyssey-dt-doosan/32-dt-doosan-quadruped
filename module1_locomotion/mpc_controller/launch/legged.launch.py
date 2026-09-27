@@ -26,9 +26,10 @@ def _launch_setup(context, *args, **kwargs):
     world = LaunchConfiguration("world").perform(context)
     gui = LaunchConfiguration("gui").perform(context).lower() == "true"
     mu, p_gain, d_gain = (float(LaunchConfiguration(k).perform(context)) for k in ("mu", "p_gain", "d_gain"))
+    slope_deg, slope_len = (float(LaunchConfiguration(k).perform(context)) for k in ("slope_deg", "slope_len"))
 
     sim_share = get_package_share_directory("simulation")
-    world_file, legged_yaml, legged_models = write_legged_assets(sim_share, world, mu, p_gain, d_gain)
+    world_file, legged_yaml, legged_models = write_legged_assets(sim_share, world, mu, p_gain, d_gain, slope_deg=slope_deg, slope_len=slope_len)
 
     # macOS는 서버+GUI 한 프로세스를 지원하지 않음 → full_system과 같은 분리 기동
     split_gui = gui and sys.platform == "darwin"
@@ -76,6 +77,8 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("mu", default_value="0.8", description="다리 충돌 마찰(보정 손잡이)"),
             DeclareLaunchArgument("p_gain", default_value="120.0", description="관절 위치 P(보정 손잡이)"),
             DeclareLaunchArgument("d_gain", default_value="2.0", description="관절 위치 D(보정 손잡이)"),
+            DeclareLaunchArgument("slope_deg", default_value="0.0", description="스폰 앞 2 m 오르막·평지·내리막 경사(대조 실험용, 0이면 없음)"),
+            DeclareLaunchArgument("slope_len", default_value="3.0"),
             OpaqueFunction(function=_launch_setup),
         ]
     )

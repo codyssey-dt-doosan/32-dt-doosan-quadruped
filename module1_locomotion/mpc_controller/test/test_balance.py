@@ -179,3 +179,16 @@ def test_swing_targets_land_at_neutral_y_when_still():
     assert p_land[0][1] == pytest.approx(0.14, abs=1e-6)
     assert p_land[0][0] == pytest.approx(0.19, abs=1e-6)
     assert p_land[3][1] == pytest.approx(-0.14, abs=1e-6)
+
+
+def test_window_rows_slices_and_rezeroes():
+    """--replay-window: s ≤ t < s+d만 골라 t -= s로 재영점, v·w 값은 보존."""
+    from walk_metrics import window_rows
+
+    rows = [(float(t), t * 0.1, t * 0.01) for t in range(6)]  # t=0..5
+    out = window_rows(rows, 2.0, 3.0)
+    assert len(out) == 3
+    for i, (t, v, w) in enumerate(out):
+        assert t == pytest.approx(i)
+        assert v == pytest.approx((i + 2) * 0.1)
+        assert w == pytest.approx((i + 2) * 0.01)

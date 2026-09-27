@@ -4,6 +4,7 @@
   --cmd V W [S]     : (v, w)를 20 Hz로 S초 발행하며 pose/info 캡처 → 속도 추종·기울기·z 표준편차 (기준 1)
   --record F.csv S  : /cmd_vel을 S초 기록 (sim 시각 기준, 기본 구동 full_system 순찰 중 실행)
   --replay F.csv    : 기록을 sim 시각에 맞춰 재발행 → 추종 RMS·종점 오차 (기준 2)
+  --replay-window S D : --replay 파일에서 S ≤ t < S+D 구간만 잘라 재영점(t -= S) 후 재생
   --slope DEG LEN   : x 구간(오르막/평지/내리막)별 속도·pitch·최대 기울기·횡 드리프트 (기준 3~5, --cmd와 같이)
 판정 공통: hold 0, fail(첫 3틱 제외) 0, sat ≤ 50, mpc 평균 < 5 ms·p99 < 10 ms, 전도(tilt > 45°) 0.
 """
@@ -12,6 +13,7 @@ import csv
 import math
 import re
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -113,6 +115,11 @@ def _record(path: str, seconds: float) -> None:
     rclpy.shutdown()
 
 
+def window_rows(rows: list, s: float, d: float) -> list:
+    """(t, v, w) 행에서 s ≤ t < s+d만 골라 t -= s로 재영점(재생 구간을 잘라 쓰기 위함)."""
+    return [(t - s, v, w) for t, v, w in rows if s <= t < s + d]
+
+
 def _replay(path: str, start_sim: list) -> None:
     """CSV (t, v, w)를 sim 시각에 맞춰 재발행. start_sim[0]에 첫 발행 sim 시각을 남긴다."""
     import rclpy
@@ -194,20 +201,28 @@ def main() -> int:
     ap.add_argument("--cmd", nargs="+", type=float, metavar="V W [S]")
     ap.add_argument("--record", nargs=2, metavar=("F", "S"))
     ap.add_argument("--replay", metavar="F")
+    ap.add_argument("--replay-window", nargs=2, type=float, metavar=("S", "D"))
     ap.add_argument("--slope", nargs=2, type=float, metavar=("DEG", "LEN"))
     a = ap.parse_args()
     if a.record:
         _record(a.record[0], float(a.record[1]))
         return 0
     start_sim = [None]
+    replay_path = a.replay
+    if a.replay and a.replay_window:
+        s, d = a.replay_window
+        raw = [(float(t), float(v), float(w)) for t, v, w in csv.reader(open(a.replay))]
+        tmp = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv", newline="")
+        csv.writer(tmp).writerows(window_rows(raw, s, d))
+        tmp.close()
+        replay_path = tmp.name
     if a.cmd:
         v, w = a.cmd[0], a.cmd[1]
         dur = a.cmd[2] if len(a.cmd) > 2 else 15.0
         threading.Thread(target=_publish, args=(v, w, dur + 1.0), daemon=True).start()
     elif a.replay:
-        rows_cmd = list(csv.reader(open(a.replay)))
-        dur = float(rows_cmd[-1][0]) + 2.0
-        threading.Thread(target=_replay, args=(a.replay, start_sim), daemon=True).start()
+        dur = (a.replay_window[1] if a.replay_window else float(list(csv.reader(open(replay_path)))[-1][0])) + 2.0
+        threading.Thread(target=_replay, args=(replay_path, start_sim), daemon=True).start()
     else:
         dur = 15.0
     rows = parse_rows(tm.capture(a.world, dur))
@@ -235,7 +250,7 @@ def main() -> int:
     elif a.replay:
         while start_sim[0] is None:
             time.sleep(0.1)
-        e = replay_errors(rows, a.replay, start_sim[0])
+        e = replay_errors(rows, replay_path, start_sim[0])
         out += " " + " ".join(f"{k}={val:.3f}" for k, val in e.items())
         ok &= e["rms_v"] < 0.05 and e["rms_w"] < 0.10 and e["end_err"] < 0.10 * e["path_len"]
     print(out)
