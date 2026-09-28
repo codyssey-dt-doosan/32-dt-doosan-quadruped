@@ -64,7 +64,7 @@ ros2 launch simulation full_system.launch.py locomotion:=legged    # 전체 스�
 
 ## 힘 제어 기립 (`balance.launch.py`, 옵트인)
 
-CoM·접지력 QP(C안 ①~③: 상태 입력·다리 기구학·힘 제어 기립)로 서는 것. `legged.launch.py`(위치 PD·개루프 trot)와는 별개 런치이고, 지평 MPC(SRB, trot·경사 대응, ④)는 범위 밖. `full_system` 통합 안 함.
+CoM·접지력 QP(C안 ①~③: 상태 입력·다리 기구학·힘 제어 기립)로 서는 것. `legged.launch.py`(위치 PD·개루프 trot)와는 별개 런치이고, 지평 MPC(SRB, trot·경사 대응, ④)는 아래 `walk.launch.py`. `full_system` 통합 안 함.
 
 ```bash
 ros2 launch mpc_controller balance.launch.py                       # 평지 QP 주도 기립
@@ -110,10 +110,48 @@ ros2 launch mpc_controller balance.launch.py pitch_offset:=0.0873    # 자세 �
 
 **맥 노트:** `gz sim -s -r`가 아니라 일시정지로 시작하고, 노드가 `start_delay`(3 s) 뒤 `gz service`로 재개한다. GUI는 `legged.launch.py`와 같이 서버·창 분리 기동. IMU orientation은 **초기 자세 기준**(월드 기준 아님) — 스폰이 수평(roll=pitch=0)이어야 하며 현재 corridor의 go2 스폰은 이를 만족한다.
 
+## 지평 MPC 보행 (`walk.launch.py`, 옵트인)
+
+C안 ④: `/cmd_vel` (v, w)를 **SRB 지평 MPC**(Cheetah-3 볼록 MPC, 13상태·condensed, 발 힘 12×N, N 10·dt 0.03 s, osqp) + trot으로 실현하는 `walk_node`. `balance.launch.py`와 같은 변환본(힘 제어·구형 발·damping 0)을 쓰고, `balance_node`·`gait_node`·공용 런치는 불변. `full_system` 통합·경사 보행은 ⑤.
+
+```bash
+ros2 launch mpc_controller walk.launch.py                    # 기립(지평 MPC) → /cmd_vel 오면 trot
+ros2 launch mpc_controller walk.launch.py gui:=false          # 헤드리스
+ros2 launch mpc_controller walk.launch.py slope_deg:=15       # 스폰 앞 2 m 오르막·평지·내리막(현재 입구에서 전도, 아래 미해결)
+ros2 launch mpc_controller legged.launch.py slope_deg:=15     # 대조군: 개루프 gait_node 같은 경사
+```
+
+- 구조: `srb_mpc.py`(SRB 동역학·이산화·condensing·QP) · `gait.py`(위상·스케줄·Raibert 착지·스윙 궤적) · `body_estimate.FootMemory`(trot 2발 접촉에서도 최근 착지점 4개로 지형 평면) · `walk_node.py`(200 Hz 추정·50 Hz MPC·1 kHz 관절 토크). 지지 발 τ = −Jᵀf(접촉 자코비안), 스윙 발은 IK + 관절 PD.
+- 모드: `standup`(0~2 s PD 램프) → `blend` → `stand`(MPC, 4발) → `walk`(명령 있을 때 gait 활성, 끊기면 정지 전이) → `hold`(QP 실패 50 ms·기울기 45°·IMU/관절 0.1 s·IK 실패 20틱, 래치).
+- 런치 인자: `world` · `gui` · `mu` 0.8 · `slope_deg`·`slope_len` 3.0 · `ramp_deg` · 튜닝용 `stride_hz` 3.0 · `lift` 0.025 · `k_raibert` 0.03 · `v_gain` 1.12 · `q_weights`·`q_weights_walk`(13개 쉼표) · `alpha` · `height`·`height_walk`.
+- 실측 확정 튜닝(스펙 기본값에서 바뀐 것): `height` 0.30(정지)/`height_walk` 0.32(보행, 0.3 s 램프 — 0.32로 서 있으면 다리 도달 93%라 좌굴) · `lift` 0.025 · `step_max` 0.08 · `v_gain` 1.12(MPC 추종이 89%로 일관) · Q 정지 p_xy 20·v_xy 0.5(밀기 반응), 보행 v_xy 8·p_z 50 · 속도 추정 = `/odom` twist(v_z는 정지 시 다리 오도메트리 저역통과, 보행 시 0) · 지형 법선 저역통과 0.3 s · 스윙은 s 0.85에 착지 후 1 cm 밀기 · 조기 착지만 운동학 판정 · MPC k=0 접촉 = 실제, 접촉 변화 시 즉시 MPC.
+
+실측(corridor 헤드리스, `log/walk_run.sh <태그> walk_metrics.py <인자> -- [런치 인자]`, 로컬 스크립트):
+
+| 기준 | 시험 | 결과 | 판정 |
+|---|---|---|---|
+| 1 | 평지 (v,w) 15 s | (0.3,0) → 0.314 m/s · (0,0.5) → 0.476 rad/s · (0.5,1.0) → 0.508/0.963 · (−0.2,0) → −0.201, 기울기 ≤2.4°, z_std <1 cm | PASS(오차 <5%) |
+| — | 기립 40 s · 밀기 +y 20 N×0.5 s | z_std 0.00 mm·기울기 0.05° · 밀기 기울기 1.1°·이탈 2.7 cm(balance 2.2°/3.4 cm) | PASS |
+| 2 | 위층 `/cmd_vel` 재생 | 60 s 전체는 개루프 재생이 corridor 장애물에 부딪힘 → 20 s 창(`--replay-window 40 20`, 직진→회전→복합). 옛 지표(틱 미분 RMS)로 v 0.5 녹화 rms_v 0.154·w 0.149, v×0.8 녹화 0.123·0.146, 종점 오차 6~7%. 지표 재정의 후(아래) 재측정은 머신 부하로 무효 | **미확정** |
+| 3·4·5 | 경사 10°·15°·20° | 경사로 **입구에서 전도**(lift 0.025·0.04 모두) | FAIL → ⑤ |
+| 6 | 계산 | MPC 평균 1.6~2.1 ms·p99 ≈2 ms(GUI 부하 7 ms) | PASS |
+| 7 | 회귀 | pytest 146, balance 기립 동률(z_std 0.01 mm·drift 0.1 cm), `legged.launch.py` 불변 | PASS |
+
+- **기준 2 지표(2026-09-28 재정의)**: `walk_metrics --replay`는 보폭 창(1/stride_hz = 0.33 s) 평균 속도로 RMS를 잰다. 명령이 바뀐 뒤 0.5 s 안에 걸친 창은 가속 구간이라 제외(`n_win` = 채점 창 수). 틱별 포즈 미분은 trot 흔들림이 그대로 들어가 v 0.3 일정 명령에서도 rms_v 0.071이 나와 0.05 기준에 원리적으로 못 미쳤다.
+
+**미해결(백로그):**
+1. **경사 입구 전도**: 발 4점 단일 평면 추정이 앞발(경사면)·뒷발(평지)이 다른 면에 있는 입구를 표현 못 해 평면이 뒤틀리고(n_x −0.38) 롤·요가 발산. 발별 지형 높이(elevation_map 연동)로 ⑤에서. 개루프 `gait_node`는 10°·15° 완주(15° 기울기 31°), 20° 못 오름.
+2. **보행 전도율**: Task 6 최종 구성에서 11회 중 1회(회전, 착지 시 평면 원점 점프 → Σf_z 140~200 N 스파이크). 2026-09-27~28 재측정에선 머신 부하(load 4~5, MPC p99 32 ms까지)와 함께 절반 이상 전도 — 부하 민감도 포함 원인 미확인.
+3. **기동 레이스**: 드물게 기동 직후 `qp 0·active 0`으로 hold(재기동하면 정상).
+4. 기준 2를 조용한 머신에서 새 지표로 재측정.
+
+**함정:** 맥이 잠들면 IMU가 끊겨 hold → 배치는 깨어 있을 때만. GUI 카메라는 `gz service -s /gui/move_to --reqtype gz.msgs.StringMsg --reptype gz.msgs.Boolean --req 'data: "go2"'` 반복만 로봇을 잡는다(follow는 벽).
+
 ## 테스트·실험
 
 ```bash
 python -m pytest test/ -q -p no:launch_testing -p no:launch_ros
 python3 scripts/patrol_metrics.py --world corridor   # full_system 떠 있는 상태에서 한 바퀴 측정
 python3 scripts/trot_metrics.py --world corridor --expect-v 0.3 --expect-w 0   # legged.launch.py에 /cmd_vel 걸린 상태에서 추종 측정(인자 없으면 제자리 trot 기준)
+python3 scripts/walk_metrics.py --world corridor --log log/walk_<태그>.log --cmd 0.3 0 15   # walk.launch.py 떠 있는 상태에서 (v,w) 추종(--replay F.csv [--replay-window S D], --slope DEG LEN)
 ```

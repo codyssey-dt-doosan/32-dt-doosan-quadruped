@@ -3,7 +3,7 @@
 
   --cmd V W [S]     : (v, w)를 20 Hz로 S초 발행하며 pose/info 캡처 → 속도 추종·기울기·z 표준편차 (기준 1)
   --record F.csv S  : /cmd_vel을 S초 기록 (sim 시각 기준, 기본 구동 full_system 순찰 중 실행)
-  --replay F.csv    : 기록을 sim 시각에 맞춰 재발행 → 추종 RMS·종점 오차 (기준 2)
+  --replay F.csv    : 기록을 sim 시각에 맞춰 재발행 → 보폭 창 평균 속도 추종 RMS(명령 변화 후 0.5 s 제외)·종점 오차 (기준 2)
   --replay-window S D : --replay 파일에서 S ≤ t < S+D 구간만 잘라 재영점(t -= S) 후 재생
   --slope DEG LEN   : x 구간(오르막/평지/내리막)별 속도·pitch·최대 기울기·횡 드리프트 (기준 3~5, --cmd와 같이)
 판정 공통: hold 0, fail(첫 3틱 제외) 0, sat ≤ 50, mpc 평균 < 5 ms·p99 < 10 ms, 전도(tilt > 45°) 0.
@@ -145,11 +145,15 @@ def _replay(path: str, start_sim: list) -> None:
     rclpy.shutdown()
 
 
-def replay_errors(rows: list, cmd_path: str, t_start: float) -> dict:
-    """추종 RMS(v, w)·종점 오차/경로 길이. 명령은 sim 시각 t_start + t."""
+def replay_errors(rows: list, cmd_path: str, t_start: float, win: float = 1 / 3.0, settle: float = 0.5) -> dict:
+    """추종 RMS(v, w)·종점 오차/경로 길이. 명령은 sim 시각 t_start + t.
+
+    속도는 보폭 창(win = 1/stride_hz) 평균 — 틱별 미분은 trot 흔들림이 그대로 들어가 일정 명령에서도 rms_v ≈0.07(실측).
+    명령이 바뀐 뒤 settle초 안(시작 포함)에 걸친 창은 가속 구간이라 제외. n_win = 채점 창 수."""
     cmd = [(float(t) + t_start, float(v), float(w)) for t, v, w in csv.reader(open(cmd_path))]
     r = [q for q in rows if q[7] >= t_start]
     yaw = _unwrap_deg([q[5] for q in r])
+    changes = [t_start] + [b[0] for a, b in zip(cmd[:-1], cmd[1:]) if (a[1], a[2]) != (b[1], b[2])]
 
     def cmd_at(t):
         prev = (0.0, 0.0)
@@ -159,22 +163,27 @@ def replay_errors(rows: list, cmd_path: str, t_start: float) -> dict:
             prev = (v, w)
         return prev
 
-    ev, ew, n = 0.0, 0.0, 0
-    for a, b, ya, yb in zip(r[:-1], r[1:], yaw[:-1], yaw[1:]):
-        dt = b[7] - a[7]
-        if dt <= 0:
-            continue
-        h = math.radians(ya)
-        vm = ((b[0] - a[0]) * math.cos(h) + (b[1] - a[1]) * math.sin(h)) / dt
-        wm = math.radians(yb - ya) / dt
-        v, w = cmd_at(a[7])
-        ev, ew, n = ev + (vm - v) ** 2, ew + (wm - w) ** 2, n + 1
+    ev, ew, n, i = 0.0, 0.0, 0, 0
+    while i < len(r):
+        j = next((k for k in range(i + 1, len(r)) if r[k][7] - r[i][7] >= win), None)
+        if j is None:
+            break
+        a, b = r[i], r[j]
+        if not any(a[7] - settle < c <= b[7] for c in changes):
+            dt = b[7] - a[7]
+            h = math.radians((yaw[i] + yaw[j]) / 2)
+            vm = ((b[0] - a[0]) * math.cos(h) + (b[1] - a[1]) * math.sin(h)) / dt
+            wm = math.radians(yaw[j] - yaw[i]) / dt
+            v, w = cmd_at(a[7])
+            ev, ew, n = ev + (vm - v) ** 2, ew + (wm - w) ** 2, n + 1
+        i = j
     x, y, th, length = r[0][0], r[0][1], math.radians(r[0][5]), 0.0
     for (ta, v, w), (tb, _, _) in zip(cmd[:-1], cmd[1:]):
         dt = tb - ta
         x, y, th, length = x + v * math.cos(th) * dt, y + v * math.sin(th) * dt, th + w * dt, length + abs(v) * dt
     end_err = math.hypot(r[-1][0] - x, r[-1][1] - y)
-    return {"rms_v": (ev / n) ** 0.5, "rms_w": (ew / n) ** 0.5, "end_err": end_err, "path_len": length}
+    return {"rms_v": (ev / n) ** 0.5 if n else float("nan"), "rms_w": (ew / n) ** 0.5 if n else float("nan"),
+            "end_err": end_err, "path_len": length, "n_win": n}
 
 
 def slope_segments(rows: list, deg: float, L: float) -> dict:
@@ -251,8 +260,8 @@ def main() -> int:
         while start_sim[0] is None:
             time.sleep(0.1)
         e = replay_errors(rows, replay_path, start_sim[0])
-        out += " " + " ".join(f"{k}={val:.3f}" for k, val in e.items())
-        ok &= e["rms_v"] < 0.05 and e["rms_w"] < 0.10 and e["end_err"] < 0.10 * e["path_len"]
+        out += " " + " ".join(f"{k}={val:.3f}" for k, val in e.items() if k != "n_win") + f" n_win={e['n_win']}"
+        ok &= e["n_win"] > 0 and e["rms_v"] < 0.05 and e["rms_w"] < 0.10 and e["end_err"] < 0.10 * e["path_len"]
     print(out)
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1

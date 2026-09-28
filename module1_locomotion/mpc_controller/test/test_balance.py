@@ -192,3 +192,22 @@ def test_window_rows_slices_and_rezeroes():
         assert t == pytest.approx(i)
         assert v == pytest.approx((i + 2) * 0.1)
         assert w == pytest.approx((i + 2) * 0.01)
+
+
+def test_replay_errors_stride_window_ignores_trot_sway_and_accel(tmp_path):
+    """기준 2: 3 Hz 전후 흔들림은 보폭 창 평균에서 사라지고, 명령 변화 후 0.5 s 창은 채점 안 함."""
+    import math
+
+    from walk_metrics import replay_errors
+
+    cmd = tmp_path / "c.csv"
+    cmd.write_text("".join(f"{i / 10:.1f},{0.3 if i < 30 else 0.0},0.0\n" for i in range(60)))  # 3 s 전진 → 3 s 정지
+    rows = []
+    for k in range(1201):  # 200 Hz 6 s, 명령 변화 즉시 반응 + 진폭 1 cm 3 Hz 흔들림
+        t = k / 200
+        x = 0.3 * min(t, 3.0) + 0.01 * math.sin(2 * math.pi * 3 * t)
+        rows.append((x, 0.0, 0.3, 0.0, 0.0, 0.0, None, 100.0 + t))
+    e = replay_errors(rows, str(cmd), 100.0)
+    assert e["rms_v"] < 0.01 and e["rms_w"] < 1e-9
+    assert 10 <= e["n_win"] < 18  # 18창 중 시작·정지 직후 창 제외
+    assert e["path_len"] == pytest.approx(0.9, abs=1e-6)
