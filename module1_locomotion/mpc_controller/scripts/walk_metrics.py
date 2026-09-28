@@ -149,7 +149,7 @@ def replay_errors(rows: list, cmd_path: str, t_start: float, win: float = 1 / 3.
     """추종 RMS(v, w)·종점 오차/경로 길이. 명령은 sim 시각 t_start + t.
 
     속도는 보폭 창(win = 1/stride_hz) 평균 — 틱별 미분은 trot 흔들림이 그대로 들어가 일정 명령에서도 rms_v ≈0.07(실측).
-    명령이 바뀐 뒤 settle초 안(시작 포함)에 걸친 창은 가속 구간이라 제외. n_win = 채점 창 수."""
+    명령이 바뀐 뒤 settle초 안(시작 포함)에 걸친 창은 가속 구간이라 제외, 마지막 명령 이후(캡처 여유 구간, 로봇은 cmd_timeout으로 정지)도 제외. n_win = 채점 창 수."""
     cmd = [(float(t) + t_start, float(v), float(w)) for t, v, w in csv.reader(open(cmd_path))]
     r = [q for q in rows if q[7] >= t_start]
     yaw = _unwrap_deg([q[5] for q in r])
@@ -169,7 +169,7 @@ def replay_errors(rows: list, cmd_path: str, t_start: float, win: float = 1 / 3.
         if j is None:
             break
         a, b = r[i], r[j]
-        if not any(a[7] - settle < c <= b[7] for c in changes):
+        if b[7] <= cmd[-1][0] and not any(a[7] - settle < c <= b[7] for c in changes):
             dt = b[7] - a[7]
             h = math.radians((yaw[i] + yaw[j]) / 2)
             vm = ((b[0] - a[0]) * math.cos(h) + (b[1] - a[1]) * math.sin(h)) / dt

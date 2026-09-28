@@ -211,3 +211,14 @@ def test_replay_errors_stride_window_ignores_trot_sway_and_accel(tmp_path):
     assert e["rms_v"] < 0.01 and e["rms_w"] < 1e-9
     assert 10 <= e["n_win"] < 18  # 18창 중 시작·정지 직후 창 제외
     assert e["path_len"] == pytest.approx(0.9, abs=1e-6)
+
+
+def test_replay_errors_ignores_capture_tail_after_last_command(tmp_path):
+    """캡처는 마지막 명령 뒤 여유(로봇은 cmd_timeout으로 정지)까지 이어짐 — 그 구간을 마지막 명령으로 채점하면 안 됨."""
+    from walk_metrics import replay_errors
+
+    cmd = tmp_path / "c.csv"
+    cmd.write_text("".join(f"{i / 10:.1f},0.3,0.0\n" for i in range(30)))  # 0~2.9 s v 0.3, 이후 명령 없음
+    rows = [(0.3 * min(k / 200, 3.0), 0.0, 0.3, 0.0, 0.0, 0.0, None, 100.0 + k / 200) for k in range(1001)]  # 3 s 뒤 정지, 5 s까지
+    e = replay_errors(rows, str(cmd), 100.0)
+    assert e["rms_v"] < 0.01
