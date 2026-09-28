@@ -43,6 +43,7 @@ def _launch_setup(context, *args, **kwargs):
         "lift": float(cfg("lift")),
         "k_raibert": float(cfg("k_raibert")),
         "v_gain": float(cfg("v_gain")),
+        "touch_h": float(cfg("touch_h")),
     }
     def parse_q_weights(name):
         w = [float(v) for v in cfg(name).split(",")]
@@ -84,6 +85,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("lift", default_value="0.025"),
             DeclareLaunchArgument("k_raibert", default_value="0.03"),
             DeclareLaunchArgument("v_gain", default_value="1.12", description="전진 보정 손잡이 — MPC 추종이 89%로 일관(실측)"),
+            DeclareLaunchArgument("touch_h", default_value="0.008", description="조기 착지 판정 높이 m(스윙 후반 발이 평면 위 이 높이 미만이면 지지로)"),
             DeclareLaunchArgument("q_weights", default_value="", description="13개 쉼표 구분(rpy3 p3 ω3 v3 g), 비우면 기본"),
             DeclareLaunchArgument("q_weights_walk", default_value="", description="보행 중(gait 활성) Q, 13개 쉼표 구분, 비우면 기본"),
             DeclareLaunchArgument("alpha", default_value="", description="비우면 기본"),
