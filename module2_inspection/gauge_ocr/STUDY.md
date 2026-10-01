@@ -827,7 +827,276 @@ gz service -s /world/factory/set_pose \
 
 ## 5. OpenCV 원 검출 → 바늘 검출 → 각도·값 매핑
 
-> 계획 5번 항목. 학습 후 기입.
+계획 5번 항목. 3절에서 모은 PNG를 입력으로, **이미지 한 장 → 게이지 값** 함수를 오프라인에서 완성한다.
+노드와 분리된 순수 함수(`gauge_ocr/reader.py`)로 만들어 두면 6절에서 노드에 붙이기만 하면 된다.
+
+### 5.1 파이프라인 한눈에
+
+```
+BGR 프레임
+  │ ① 원판 찾기      HSV 흰색 마스크 → 윤곽선 → fitEllipse      → 중심·타원
+  │ ② 정면화        타원 → 원 아핀 변환 (올려다본 찌그러짐 제거) → 200×200 원판 이미지
+  │ ③ 바늘 각도      빨강 마스크 → warpPolar → 각도별 합 최대     → φ (12시 기준 시계 방향)
+  │ ④ 값 매핑       φ_min·스윕·값 범위로 선형 보간               → 값
+  ▼
+값 (실패 시 NaN)
+```
+
+각 단계에서 쓰는 OpenCV 개념:
+
+| 단계 | 함수 | 알아야 할 것 |
+|------|------|--------------|
+| ① | `cvtColor(BGR2HSV)`, `inRange`, `morphologyEx`, `findContours`, `fitEllipse`, `contourArea` | HSV에서 흰색 = S 낮고 V 높음. OpenCV H 범위는 0~180 |
+| ② | `getAffineTransform`, `warpAffine` | 점 3쌍으로 아핀 변환 결정. 타원 축 끝점 → 원 위 점 |
+| ③ | `inRange` 두 번 + `bitwise_or`, `warpPolar` | 빨강은 H 0 근처와 180 근처에 걸쳐 있다. 극좌표 펼치기 |
+| ④ | 순수 산수 | 각도 랩어라운드(360° → 0°) |
+
+### 5.2 ① 원판 찾기 — 왜 HoughCircles가 아니라 윤곽선인가
+
+| 방법 | 장점 | 단점 |
+|------|------|------|
+| `cv2.HoughCircles` | 교과서적, 원이 부분적으로 가려져도 검출 | 파라미터(`dp`, `param1/2`, `minRadius/maxRadius`) 튜닝이 까다롭고, **타원(사선 뷰)에 약함** |
+| **색 마스크 + `fitEllipse`** (채택) | 시뮬은 원판이 균일한 흰색이라 마스크가 깨끗함. 타원 파라미터(축 길이·기울기)가 바로 나와 ②에 그대로 씀 | 원판과 비슷한 흰 물체가 있으면 오검출 → 채움률·면적·ROI로 거른다 |
+
+- 마스크 후 `MORPH_CLOSE`: 빨간 바늘·검은 허브가 흰 영역에 구멍을 내므로 닫아 준다. 안 하면 윤곽선이 바늘 모양으로 파인다.
+- **채움률** = 윤곽 면적 / 맞춘 타원 면적. 원판이면 ≈ 1, 흰 사각형 벽 조각이면 낮다. 0.8 미만은 버린다.
+- 화면에 흰 물체가 많아지면(공장 월드) 계획 STUDY_PLAN 4.1 (가) 방식처럼 **게이지 3D 위치를 투영한 ROI 안에서만** 찾는다. 투영식: `u = fx·(−Y/X) + cx`, `v = fy·(−Z/X) + cy` (카메라 좌표 X 앞, Y 왼쪽, Z 위 → 이미지 u 오른쪽, v 아래). 로봇 자세는 `/odom`, 카메라 오프셋은 (0.28, 0, 0.05).
+
+### 5.3 ② 정면화 — 타원을 원으로
+
+로봇이 게이지를 올려다보면 원판이 세로로 눌린 타원으로 찍힌다(4.2절 안 A에서 약 4%, 안 B에서 약 10%).
+그대로 각도를 재면 대각선 방향 바늘 각도가 몇 도씩 틀어진다. `fitEllipse`의 결과 `((cx, cy), (w, h), angle)`로 펴 준다.
+
+- `w`는 `angle` 방향 축의 **지름**, `h`는 그에 수직인 축의 지름이다(반지름 아님).
+- 타원 축 끝점 3개(w축 양 끝, h축 한 끝)를 반지름 `out_r` 원 위의 같은 방향 점으로 보내는 아핀 변환을 만들면, 축 방향 그대로 늘리기만 하는 변환이 된다.
+- 엄밀히는 원근 변환이지만 원판이 작아(화면 수십 px) 아핀 근사로 충분하다.
+- **함정**: `fitEllipse`의 `angle`·`w`·`h` 관례는 버전·상황에 따라 헷갈리기 쉽다. 결과를 `cv2.ellipse(img, ((cx,cy),(w,h),angle), (0,255,0), 1)`로 **반드시 그려서** 원판 테두리와 겹치는지 확인한다. 같은 RotatedRect 관례로 그리므로 겹치면 해석이 맞은 것이다.
+
+### 5.4 ③ 바늘 각도 — warpPolar
+
+`cv2.warpPolar(src, (반지름 칸 수, 각도 칸 수), 중심, 최대 반지름, WARP_POLAR_LINEAR)`는 원을 직사각형으로 펼친다.
+**출력의 행 = 각도, 열 = 반지름**이다. 바늘은 "특정 행에만 빨간 픽셀이 몰린 띠"가 되므로 행별 합의 최댓값이 바늘 방향이다.
+
+| 대안 | 방식 | 이번에 안 쓴 이유 |
+|------|------|-------------------|
+| `HoughLinesP` | 직선 후보 → 중심을 지나는 가장 긴 선 | 바늘이 짧고 굵으면 선이 여러 개 잡힘, 파라미터 많음 |
+| 모멘트·PCA | 바늘 마스크의 주축 방향 | 주축은 방향만 주고 **앞뒤(180°) 구분이 안 됨** → 끝점 판정 추가 필요 |
+| **warpPolar** (채택) | 각도별 픽셀 합 | 앞뒤 구분이 자연스럽고, 노이즈에 강하며, 신뢰도(최댓값 크기)도 같이 나옴 |
+
+각도 변환:
+- `warpPolar`의 각도는 **이미지 x축(3시) 기준, 화면상 시계 방향**으로 증가한다(이미지 y가 아래로 향하므로).
+- 12시 기준 시계 방향 φ로 바꾸면 `φ = (θ_img + 90) mod 360`. 확인: 3시는 θ_img = 0 → φ = 90 ✓, 12시는 θ_img = 270 → φ = 0 ✓.
+- 반지름 0.25R 안쪽(허브)과 0.85R 바깥(테두리·눈금)은 잘라 내고 합한다.
+- 각도축은 원형이므로 스무딩할 때 양 끝을 이어 붙여(`np.r_[끝, 전체, 처음]`) 경계에서 최댓값이 깨지지 않게 한다.
+
+### 5.5 ④ 각도 → 값
+
+```
+t = ((φ − φ_min) mod 360) / 스윕          # 0 ~ 1이면 정상 범위
+값 = v_min + t · (v_max − v_min)
+```
+
+- `mod 360`이 랩어라운드를 해결한다. φ_min = 225°, 스윕 270°이면 φ = 0°(12시)는 t = 135/270 = 0.5 → 중간값.
+- t > 1이면 바늘이 **죽은 구간**(4시 반 ~ 7시 반 사이 90°)에 있다. 판독 오류일 가능성이 높으므로 가까운 끝값으로 붙이거나 NaN 처리한다. 아래 코드는 가까운 끝값.
+
+### 5.6 전체 코드 — `gauge_ocr/reader.py`
+
+ROS를 import하지 않는다. `cv2`·`numpy`만 있으면 Mac 로컬 파이썬(venv에 `opencv-python-headless`)에서도 돌아가 Docker 없이 튜닝할 수 있다.
+
+```python
+"""게이지 판독 순수 함수. ROS 의존성 없음 → PNG로 단위 테스트 가능."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+
+import cv2
+import numpy as np
+
+
+@dataclass
+class GaugeSpec:
+    phi_min: float = 225.0   # 최소값 바늘 각도 (12시 기준 시계 방향, 도)
+    sweep: float = 270.0     # 최소 → 최대 시계 방향 스윕 (도)
+    v_min: float = 0.0
+    v_max: float = 10.0
+
+
+@dataclass
+class Dial:
+    cx: float
+    cy: float
+    w: float        # fitEllipse 결과 그대로 (지름 단위)
+    h: float
+    angle: float    # 도
+
+
+# ---------- 1. 원판 찾기 ----------
+
+def find_dial(bgr: np.ndarray, min_area: float = 300.0, min_fill: float = 0.8) -> Dial | None:
+    """밝고 채도 낮은(흰색) 타원 블롭 중 가장 큰 것."""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 0, 170), (180, 60, 255))           # S 낮고 V 높음 = 흰색
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))  # 바늘이 판 구멍 메우기
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    best = None
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < min_area or len(c) < 5:                           # fitEllipse는 점 5개 이상 필요
+            continue
+        (cx, cy), (w, h), ang = cv2.fitEllipse(c)
+        fill = area / (math.pi * w * h / 4)                         # 타원 면적 대비 채움률 → 사각 물체 배제
+        if fill < min_fill:
+            continue
+        if best is None or area > best[0]:
+            best = (area, Dial(cx, cy, w, h, ang))
+    return None if best is None else best[1]
+
+
+# ---------- 2. 타원 → 원 정면화 ----------
+
+def rectify(bgr: np.ndarray, d: Dial, out_r: int = 100) -> np.ndarray:
+    """타원 원판을 반지름 out_r 원으로 펴서 (2·out_r)² 이미지로 잘라 낸다."""
+    a = math.radians(d.angle)
+    u = np.array([math.cos(a), math.sin(a)])       # w 축 방향
+    v = np.array([-math.sin(a), math.cos(a)])      # h 축 방향
+    c = np.array([d.cx, d.cy])
+    src = np.float32([c + d.w / 2 * u, c + d.h / 2 * v, c - d.w / 2 * u])
+    oc = np.array([out_r, out_r], float)
+    dst = np.float32([oc + out_r * u, oc + out_r * v, oc - out_r * u])
+    M = cv2.getAffineTransform(src, dst)
+    return cv2.warpAffine(bgr, M, (2 * out_r, 2 * out_r), flags=cv2.INTER_LINEAR)
+
+
+# ---------- 3. 바늘 각도 ----------
+
+def needle_mask(bgr: np.ndarray) -> np.ndarray:
+    """빨강은 H가 0 근처와 180 근처 양쪽에 걸친다 → 두 범위 OR."""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    m1 = cv2.inRange(hsv, (0, 100, 60), (10, 255, 255))
+    m2 = cv2.inRange(hsv, (170, 100, 60), (180, 255, 255))
+    return cv2.bitwise_or(m1, m2)
+
+
+def needle_phi(face: np.ndarray, r_in: float = 0.25, r_out: float = 0.85,
+               n_angles: int = 720) -> tuple[float, float]:
+    """정면화된 원판 이미지 → (φ 도, 신뢰도 0~1).
+
+    warpPolar 출력: 행 = 각도(0~360, 이미지 x축 기준 시계 방향), 열 = 반지름.
+    """
+    r = face.shape[0] / 2
+    mask = needle_mask(face)
+    polar = cv2.warpPolar(mask, (int(r), n_angles), (r, r), r, cv2.WARP_POLAR_LINEAR)
+    band = polar[:, int(r_in * r): int(r_out * r)]                  # 중심(허브)·테두리 제외
+    score = band.sum(axis=1).astype(np.float64)
+    if score.max() <= 0:
+        return float("nan"), 0.0
+    score = np.convolve(np.r_[score[-5:], score, score[:5]], np.ones(11) / 11, "valid")  # 원형 스무딩
+    i = int(np.argmax(score))
+    theta_img = i * 360.0 / n_angles                                 # x축 기준 시계 방향
+    phi = (theta_img + 90.0) % 360.0                                 # 12시 기준 시계 방향
+    conf = float(score[i] / (255.0 * band.shape[1]))
+    return phi, conf
+
+
+# ---------- 4. 각도 → 값 ----------
+
+def phi_to_value(phi: float, spec: GaugeSpec) -> float:
+    t = ((phi - spec.phi_min) % 360.0) / spec.sweep
+    if t > 1.0:                                     # 스윕 밖(죽은 구간) → 가까운 끝으로
+        t = 1.0 if (t - 1.0) * spec.sweep < (360.0 - spec.sweep) / 2 else 0.0
+    return spec.v_min + t * (spec.v_max - spec.v_min)
+
+
+def read_gauge(bgr: np.ndarray, spec: GaugeSpec) -> tuple[float, dict]:
+    """전체 파이프라인. 실패하면 (nan, 디버그 정보)."""
+    dbg: dict = {}
+    d = find_dial(bgr)
+    if d is None:
+        return float("nan"), dbg
+    dbg["dial"] = d
+    face = rectify(bgr, d)
+    phi, conf = needle_phi(face)
+    dbg.update(face=face, phi=phi, conf=conf)
+    if math.isnan(phi) or conf < 0.05:
+        return float("nan"), dbg
+    return phi_to_value(phi, spec), dbg
+```
+
+### 5.7 오프라인 튜닝 흐름
+
+```python
+# tools/try_reader.py — 3절 데이터셋 폴더를 돌며 오차 표 출력
+import csv, glob, os, sys
+import cv2
+from gauge_ocr.reader import GaugeSpec, read_gauge
+
+folder = sys.argv[1]
+labels = {r["file"]: float(r["value"]) for r in csv.DictReader(open(os.path.join(folder, "labels.csv")))}
+spec = GaugeSpec()
+errs = []
+for path in sorted(glob.glob(os.path.join(folder, "*.png"))):
+    name = os.path.basename(path)
+    v, dbg = read_gauge(cv2.imread(path), spec)
+    gt = labels.get(name)
+    err = abs(v - gt) if gt is not None else float("nan")
+    errs.append(err)
+    print(f"{name}  read={v:6.2f}  gt={gt}  err={err:.3f}  phi={dbg.get('phi', float('nan')):.1f}  conf={dbg.get('conf', 0):.2f}")
+ok = [e for e in errs if e == e]   # NaN 제외
+print(f"판독 성공 {len(ok)}/{len(errs)}, 평균 오차 {sum(ok)/max(len(ok),1):.3f}, 최대 {max(ok, default=float('nan')):.3f}")
+```
+
+- 실패한 이미지는 `dbg["face"]`(정면화된 원판)를 PNG로 저장해 눈으로 본다. 대부분 ① 원판 오검출이나 ③ 마스크 문제다.
+- 마스크 임계(HSV 범위)는 시뮬 조명에 따라 다르다. 실제 캡처에서 원판·바늘 픽셀의 HSV 값을 몇 개 찍어 보고(`hsv[y, x]`) 범위를 정한다.
+- 튜닝이 끝나면 3.5절의 **최종 측정 세트**로 한 번만 돌려 보고서용 오차를 낸다.
+
+### 5.8 합성 이미지로 미리 검증한 결과
+
+시뮬 데이터가 없어도 OpenCV로 게이지를 그려(남색 배경 + 흰 원판 + 빨간 한쪽 바늘 + 검은 허브, 6절 테스트 코드) 위 코드를 검증할 수 있다. 0~10 범위 41개 값에서 측정한 절대 오차:
+
+| 원판 반지름 | 정면 (눌림 없음) | 세로 10% 눌림 | 세로 25% 눌림 |
+|-------------|------------------|---------------|---------------|
+| 50 px (4.2절 안 A) | 최대 0.019 | 최대 0.028 | 최대 0.028 |
+| 20 px (4.2절 안 B) | 최대 0.065 | 최대 0.083 | 최대 0.083 |
+
+- 값 범위 10 기준 최대 오차가 50 px에서 0.3%, 20 px에서 0.8%. **원판이 클수록 정확** → 4.2절에서 안 A를 권장한 근거.
+- 합성 이미지는 조명·그림자·렌더링 노이즈가 없으므로 시뮬 결과는 이보다 나쁠 것이다. 시뮬 결과와의 차이 자체가 보고서 거리다.
+
+### 5.9 시간 필터 (노드에서 적용)
+
+한 프레임 판독값은 흔들리므로 노드에서는 여러 프레임을 묶는다.
+- 최근 N개(예: 15개 = 1초) 값의 **중앙값**을 발행. 평균보다 튀는 값(오검출)에 강하다.
+- NaN은 버퍼에 넣지 않는다. 버퍼가 비면 NaN 발행(또는 발행 안 함 — 6절에서 대시보드와 맞춤).
+- 정차 중에만 판독: `/mission/status`가 `goto:gauge_`로 시작하고 로봇 속도(`/odom` twist)가 0.05 m/s 미만일 때만 버퍼에 넣는다. 이동 중 프레임은 블러·각도 변화로 오차가 크다.
+
+### 5.10 실습 체크리스트
+
+- [ ] `reader.py`를 Mac 로컬 venv(`pip install opencv-python-headless numpy pytest`)에서 import
+- [ ] 6절 합성 이미지 생성 함수로 φ = 0, 90, 225°를 만들어 `read_gauge` 결과 확인
+- [ ] `find_dial` 결과를 `cv2.ellipse`로 그려 원판 테두리와 겹치는지 확인 (5.3 함정)
+- [ ] `warpPolar` 결과 이미지를 저장해 바늘이 가로 띠로 보이는지, 몇 번째 행인지 직접 확인
+- [ ] 실제 시뮬 캡처에서 원판·바늘 픽셀 HSV 값을 찍어 `inRange` 범위 조정
+- [ ] `try_reader.py`로 3절 데이터셋 오차 표 출력 → 5.8 합성 결과와 비교
+- [ ] 판독 실패 이미지 원인 분류(원판 못 찾음 / 바늘 마스크 / 각도 오차)
+
+### 5.11 헷갈리기 쉬운 것
+
+- OpenCV HSV의 **H는 0~180**(도 ÷ 2), S·V는 0~255. 다른 툴(포토샵 0~360, 0~100%)에서 본 값을 그대로 쓰면 안 맞는다.
+- `fitEllipse`는 점이 5개 미만이면 예외. 작은 윤곽선은 먼저 거른다.
+- `fitEllipse`의 `(w, h)`는 지름이다. 반지름으로 착각하면 정면화 결과가 2배로 확대된다.
+- `warpPolar`의 `dsize`는 `(너비=반지름 칸, 높이=각도 칸)` 순서다. 뒤집으면 행·열 의미가 바뀐다.
+- 이미지 좌표는 y가 아래로 증가 → `atan2`로 직접 각도를 구하면 부호가 반대다. 이 문서는 φ(12시 기준 시계 방향)로 통일.
+- 바늘이 원판 중심을 양쪽으로 관통하면 warpPolar 최댓값이 두 개 생긴다. 4.3절에서 바늘을 한쪽으로만 뻗게 만든 이유.
+- `cv2.imread`는 실패해도 예외 없이 `None`을 준다. 경로 오타 시 `cvtColor`에서 엉뚱한 에러가 난다.
+
+### 5.12 참고
+
+- HSV 색 추출: https://docs.opencv.org/4.x/df/d9d/tutorial_py_colorspaces.html
+- 윤곽선·`fitEllipse`: https://docs.opencv.org/4.x/dd/d49/tutorial_py_contour_features.html
+- `warpPolar`: https://docs.opencv.org/4.x/da/d54/group__imgproc__transform.html
+- 아핀 변환: https://docs.opencv.org/4.x/d4/d61/tutorial_warp_affine.html
+- HoughCircles(비교용): https://docs.opencv.org/4.x/da/d53/tutorial_py_houghcircles.html
 
 ## 6. 파라미터화·디버그 토픽·단위 테스트
 
