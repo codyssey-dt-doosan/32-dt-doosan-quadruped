@@ -1006,4 +1006,280 @@ for row in csv.DictReader(open(os.path.join(folder, "pairs.csv"))):
 
 ## 6. message_filters 동기화 노드화·파라미터화·단위 테스트
 
-> 계획 6번 항목. 학습 후 기입.
+계획 6번 항목. 5번의 순수 함수를 노드에 붙인다. 2.3절의 "최신 RGB 캐시" 방식 대신 1.7절의 `ApproximateTimeSynchronizer`로 짝을 받고, 설정은 YAML, 결과는 오버레이 토픽, 회귀 방지는 pytest로 정리한다.
+YAML 작성·설치·런치 연결 방법은 [gauge_ocr/STUDY.md 6.2~6.3절](../gauge_ocr/STUDY.md#6-파라미터화디버그-토픽단위-테스트)과 같으므로 이 패키지의 값만 적는다.
+
+### 6.1 최종 파일 구조
+
+```
+thermal_fusion/
+  thermal_fusion/
+    thermal_fusion_node.py   # 동기화·발행 (6.3)
+    align.py                 # 5.3절
+    hotspot.py               # 5.4절
+    overlay.py               # 5.5절
+  config/
+    thermal_corridor.yaml
+    thermal_factory.yaml
+  launch/thermal_fusion.launch.py
+  test/
+    test_align.py, test_hotspot.py, test_pairer.py
+  tools/
+    pairer.py, bag_to_pairs.py   # 4.3절
+    try_fusion.py                # 5.7절
+```
+
+### 6.2 파라미터 YAML
+
+```yaml
+# config/thermal_factory.yaml
+thermal_fusion:
+  ros__parameters:
+    thermal_mode: "l16"         # l16 | l8_thermal | brightness (3.5절, 선택 (1)이면 brightness)
+    hot_on: 60.0                # ℃ (brightness 모드면 밝기 0~255)
+    hot_off: 55.0
+    n_on: 3                     # 10 Hz → 0.3 s 연속
+    n_off: 5
+    min_area_px: 20             # 열화상 픽셀 기준
+    depth: 1.4                  # 정렬 설계 거리 m (3.4절 정차점 y −4.0 기준)
+    slop: 0.05                  # 4.2절 dt 분포로 정한 값
+    view_range: [20.0, 90.0]    # 컬러맵 고정 범위 ℃
+```
+
+- 선택 (1) 흑백 카메라로 가면 `thermal_mode: "brightness"`, `hot_on: 220.0`, `hot_off: 200.0`처럼 **단위가 밝기로 바뀐다**. 같은 키에 단위가 다른 값이 들어가므로 YAML 주석에 꼭 적는다.
+- corridor에는 발열체가 없으므로(3.6절) 같은 값을 두되 알람이 안 울리는 것이 정상이다.
+- `package.xml` 추가 의존성: `cv_bridge`, `python3-opencv`, `python3-numpy`, `message_filters`, `launch_ros`. `setup.py`에 `config/*.yaml` 설치 항목 추가.
+
+### 6.3 노드
+
+```python
+"""RGB와 열화상을 정렬·융합해 과열 영역을 표시한다."""
+
+from cv_bridge import CvBridge, CvBridgeError
+from message_filters import ApproximateTimeSynchronizer, Subscriber
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Image
+from std_msgs.msg import Bool, Float32
+
+from thermal_fusion.align import thermal_to_rgb_h, warp_to_rgb
+from thermal_fusion.hotspot import Hysteresis, find_hot_blobs
+from thermal_fusion.overlay import draw_blobs, fuse
+
+
+def to_celsius(img: np.ndarray, encoding: str, mode: str) -> np.ndarray:
+    """3.5절. mode: "l16" | "l8_thermal" | "brightness"."""
+    if encoding == "mono16":
+        return img.astype(np.float32) * 0.01 - 273.15
+    if mode == "l8_thermal":
+        return 253.15 + img.astype(np.float32) * 3.0 - 273.15
+    return img.astype(np.float32)
+
+
+class ThermalFusionNode(Node):
+    def __init__(self) -> None:
+        super().__init__("thermal_fusion")
+        self.declare_parameter("world", "corridor")
+        self.declare_parameter("thermal_mode", "l16")
+        self.declare_parameter("hot_on", 60.0)
+        self.declare_parameter("hot_off", 55.0)
+        self.declare_parameter("n_on", 3)
+        self.declare_parameter("n_off", 5)
+        self.declare_parameter("min_area_px", 20)
+        self.declare_parameter("depth", 1.4)              # 정렬 설계 거리 (m)
+        self.declare_parameter("slop", 0.05)              # 동기화 허용 시각 차 (s)
+        self.declare_parameter("view_range", [20.0, 90.0])
+
+        p = lambda n: self.get_parameter(n).value  # noqa: E731
+        self._bridge = CvBridge()
+        self._H = thermal_to_rgb_h(depth=p("depth"))
+        self._hyst = Hysteresis(p("hot_on"), p("hot_off"), p("n_on"), p("n_off"))
+        self._alert = False
+
+        rgb_sub = Subscriber(self, Image, "/camera/image", qos_profile=qos_profile_sensor_data)
+        th_sub = Subscriber(self, Image, "/thermal/image", qos_profile=qos_profile_sensor_data)
+        self._sync = ApproximateTimeSynchronizer([rgb_sub, th_sub], queue_size=10, slop=p("slop"))
+        self._sync.registerCallback(self.pair_cb)
+
+        self.pub_0 = self.create_publisher(Bool, "/inspection/thermal_alert", 10)
+        self.pub_tmax = self.create_publisher(Float32, "/inspection/thermal_max", 10)
+        self.pub_overlay = self.create_publisher(Image, "/inspection/thermal_overlay", qos_profile_sensor_data)
+        self.create_timer(0.5, self._tick)
+        self.get_logger().info("thermal_fusion started (운학)")
+
+    def pair_cb(self, rgb_msg: Image, th_msg: Image) -> None:
+        try:
+            rgb = self._bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="bgr8")
+            raw = self._bridge.imgmsg_to_cv2(th_msg, desired_encoding="passthrough")
+        except CvBridgeError as e:
+            self.get_logger().warn(f"cv_bridge: {e}")
+            return
+        temp = to_celsius(raw, th_msg.encoding, self.get_parameter("thermal_mode").value)
+        blobs = find_hot_blobs(temp, self.get_parameter("hot_off").value, self.get_parameter("min_area_px").value)
+        t_max = blobs[0].t_max if blobs else float(temp.max())
+        self._alert = self._hyst.update(t_max)
+
+        out = Float32()
+        out.data = t_max
+        self.pub_tmax.publish(out)
+
+        if self.pub_overlay.get_subscription_count() > 0:
+            lo, hi = self.get_parameter("view_range").value
+            warped, valid = warp_to_rgb(temp, self._H)
+            img = draw_blobs(fuse(rgb, warped, valid, lo, hi), blobs, self._H, self._alert)
+            msg = self._bridge.cv2_to_imgmsg(img, encoding="bgr8")
+            msg.header = rgb_msg.header
+            self.pub_overlay.publish(msg)
+
+    def _tick(self) -> None:
+        out = Bool()
+        out.data = self._alert
+        self.pub_0.publish(out)
+
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = ThermalFusionNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+설계 포인트:
+- **동기화**: `message_filters.Subscriber`는 일반 구독과 달리 콜백을 직접 받지 않고 동기화기에 메시지를 넘긴다. `pair_cb(rgb, thermal)`은 두 스탬프 차이가 `slop` 이내인 짝에서만 호출된다. 짝이 안 생기면 콜백이 한 번도 안 온다 → 1.7절 확인 방법.
+- **검출 임계는 `hot_off`로**, 알람 판정은 히스테리시스(`hot_on`/`hot_off`)로. 박스는 꺼짐 임계 이상부터 그려 "곧 과열" 영역도 보이고, 알람은 켜짐 임계를 넘어야 켜진다.
+- 블롭이 없으면 화면 최고 온도를 히스테리시스에 넣는다. 그래야 알람이 켜진 뒤 온도가 내려가면 꺼진다.
+- **알람 발행은 타이머(0.5 s)**: 스켈레톤과 같은 주기·같은 토픽(`/inspection/thermal_alert`, Bool)이라 대시보드는 손댈 필요가 없다. 열화상이 안 들어와도 마지막 상태를 계속 보낸다.
+- 추가 토픽 `/inspection/thermal_max`(Float32, ℃): 대시보드에 최고 온도를 띄울지 수현과 협의(3.6절). 안 쓰면 발행만 하고 구독자가 없을 뿐이다.
+- 오버레이는 구독자가 있을 때만 만든다. warp·컬러맵·합성은 640×480에서 프레임당 수 ms가 든다.
+- `depth`·`n_on` 등은 생성자에서 한 번 읽어 `_H`·`_hyst`를 만든다. 실행 중 바꾸려면 재시작하거나 파라미터 콜백에서 다시 만든다. `hot_off`·`min_area_px`·`view_range`는 매 프레임 읽으므로 `ros2 param set`이 바로 반영된다.
+- `to_celsius`는 3.5절과 같은 함수다. 노드 파일에 두었지만 테스트하려면 `hotspot.py` 같은 순수 모듈로 옮기는 편이 낫다.
+
+### 6.4 단위 테스트
+
+5.6절 검증 코드를 그대로 옮긴다. 카메라 모델로 정답을 만들기 때문에 시뮬 없이 정렬까지 검증된다.
+
+```python
+import numpy as np
+import pytest
+
+from align import K_RGB, K_TH, map_points, thermal_to_rgb_h, warp_to_rgb
+from hotspot import Hysteresis, find_hot_blobs
+
+
+def project(k, p_cam):
+    """카메라 좌표 (X 앞, Y 왼쪽, Z 위) → 픽셀 (u, v)."""
+    x, y, z = p_cam
+    return np.array([k[0, 0] * (-y / x) + k[0, 2], k[1, 1] * (-z / x) + k[1, 2]])
+
+
+@pytest.mark.parametrize("p", [(1.5, 0.0, 0.0), (1.5, 0.3, -0.2), (1.5, -0.4, 0.25)])
+def test_alignment_at_design_depth(p):
+    """RGB 카메라 기준 점 p. 열화상은 3 cm 아래 → 열화상 좌표에선 z가 +0.03."""
+    uv_rgb = project(K_RGB, p)
+    uv_th = project(K_TH, (p[0], p[1], p[2] + 0.03))
+    got = map_points(uv_th[None], thermal_to_rgb_h(depth=p[0]))[0]
+    assert np.allclose(got, uv_rgb, atol=1e-6)
+
+
+def test_parallax_error_wrong_depth():
+    """설계 거리 1.5 m로 정렬했는데 물체가 0.4 m에 있으면 수십 px 어긋난다."""
+    p = (0.4, 0.0, 0.0)
+    got = map_points(project(K_TH, (p[0], p[1], p[2] + 0.03))[None], thermal_to_rgb_h(depth=1.5))[0]
+    err = np.linalg.norm(got - project(K_RGB, p))
+    assert 20 < err < 25
+
+
+def test_footprint():
+    _, valid = warp_to_rgb(np.zeros((240, 320), np.float32), thermal_to_rgb_h())
+    ys, xs = np.nonzero(valid)
+    assert 410 < xs.max() - xs.min() + 1 < 422
+    assert 307 < ys.max() - ys.min() + 1 < 318
+
+
+def test_blobs():
+    t = np.full((240, 320), 20.0, np.float32)
+    t[100:115, 150:170] = 85.0          # 과열 밸브
+    t[10, 10] = 90.0                    # 픽셀 하나짜리 노이즈
+    blobs = find_hot_blobs(t, threshold=60.0, min_area=20)
+    assert len(blobs) == 1
+    b = blobs[0]
+    assert (b.x, b.y, b.w, b.h) == (150, 100, 20, 15) and b.t_max == 85.0
+
+
+def test_hysteresis():
+    h = Hysteresis(on=60, off=55, n_on=3, n_off=2)
+    seq = [70, 70, 50, 70, 70, 70, 58, 58, 50, 50, 70]
+    out = [h.update(t) for t in seq]
+    assert out == [False, False, False, False, False, True, True, True, True, False, False]
+```
+
+`test/test_pairer.py` (4.3절 짝짓기):
+
+```python
+import random
+from pairer import NearestPairer      # tools를 sys.path에 넣거나 패키지 안으로 옮긴 경로로
+
+def test_pairs_are_nearest():
+    random.seed(0)
+    rgb_t = [i / 15 for i in range(150)]
+    ev = [(t, "rgb") for t in rgb_t] + [(0.013 + i / 10, "th") for i in range(100)]
+    ev.sort(key=lambda e: e[0] + random.uniform(0, 0.02))       # 기록 순서 지터
+    p, pairs = NearestPairer(max_dt=0.05), []
+    for t, k in ev:
+        pairs += p.add_rgb(t, k) if k == "rgb" else p.add_thermal(t, k)
+    pairs += p.flush()
+    assert len(pairs) == 100
+    for t_th, _, t_rgb, _ in pairs:
+        assert abs(t_rgb - t_th) == min(abs(r - t_th) for r in rgb_t)
+```
+
+```bash
+colcon build --symlink-install --packages-select thermal_fusion
+colcon test --packages-select thermal_fusion && colcon test-result --verbose
+# 빠르게 (ROS 불필요)
+cd module2_inspection/thermal_fusion && python3 -m pytest test -q
+```
+
+- 테스트의 import는 패키지 경로(`from thermal_fusion.align import ...`)로 바꾼다(위 예시는 스크래치 폴더에서 돌린 형태).
+- 히스테리시스 테스트는 **기대 출력 리스트**를 손으로 써 두는 방식이 가장 읽기 쉽다. 규칙을 바꾸면 이 리스트를 같이 고치게 되어 의도가 문서처럼 남는다.
+
+### 6.5 통합 검증 순서
+
+1. bag 재생 + 노드 단독: `ros2 bag play <과열 bag>` / `ros2 launch thermal_fusion thermal_fusion.launch.py world:=factory`
+2. `ros2 topic hz /inspection/thermal_max`가 약 10 Hz인지 → 동기화 짝이 열화상마다 생기는지. 0이면 `slop`·스탬프 확인
+3. Foxglove에서 `/inspection/thermal_overlay`를 열어 열지도·박스 위치 확인
+4. 정상 bag 재생 → 알람 `False` 유지 확인 (오탐)
+5. 통합 런치(`world:=factory`) → 로봇이 `gas_tank` 정차 중 알람이 켜지고, 떠나면 `n_off` 프레임 뒤 꺼지는지
+6. 대시보드에 "과열"/"정상" 표시 확인 (수현)
+7. REPORT.md: 정렬 오차(px), 오탐·미탐, 정차 후 알람까지 걸린 시간, 거리별 검출 성공률
+
+### 6.6 실습 체크리스트
+
+- [ ] `config/thermal_*.yaml`, `setup.py`, `package.xml` 수정 후 빌드, `ros2 param dump /thermal_fusion`으로 값 확인
+- [ ] `pair_cb` 호출 빈도 확인 (6.5절 2번)
+- [ ] `ros2 param set /thermal_fusion hot_off 40.0` → 박스가 더 넓게 잡히는지
+- [ ] 오버레이 토픽을 Foxglove에서 확인, 캡처 저장
+- [ ] `colcon test` 통과 (flake8·pep257 포함)
+- [ ] 6.5절 1~7 순서대로 통합 검증
+- [ ] STUDY_PLAN 7절 "수정 예정 사항" 체크
+
+### 6.7 헷갈리기 쉬운 것
+
+- `message_filters.Subscriber`의 QoS 인자 이름은 `qos_profile=`이다. 일반 `create_subscription`처럼 위치 인자로 넘기면 엉뚱한 곳에 들어간다.
+- 동기화기를 지역 변수로만 만들면 가비지 컬렉션으로 사라져 콜백이 안 온다. `self._sync`처럼 멤버로 들고 있는다.
+- bag 재생 시 두 토픽 중 하나만 녹화돼 있으면 짝이 영원히 안 생긴다. 노드가 조용하면 `ros2 bag info`부터.
+- `view_range`처럼 리스트 파라미터는 YAML에서도 `[20.0, 90.0]`로 float를 맞춘다. `[20, 90]`이면 정수 배열 타입이라 선언과 안 맞는다.
+- 알람 Bool을 `pair_cb`에서 바로 발행하면 10 Hz로 나가 대시보드 갱신이 잦아지고, 열화상이 끊기면 발행도 끊긴다. 타이머 발행을 유지한 이유.
+
+### 6.8 참고
+
+- message_filters (Jazzy): https://docs.ros.org/en/jazzy/p/message_filters/
+- gauge_ocr/STUDY.md 6절 (YAML·런치·colcon test 공통 내용)
+- ament_python 테스트: https://docs.ros.org/en/jazzy/Tutorials/Intermediate/Testing/Python.html
