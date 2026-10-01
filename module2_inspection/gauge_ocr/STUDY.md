@@ -1100,4 +1100,348 @@ print(f"판독 성공 {len(ok)}/{len(errs)}, 평균 오차 {sum(ok)/max(len(ok),
 
 ## 6. 파라미터화·디버그 토픽·단위 테스트
 
-> 계획 6번 항목. 학습 후 기입.
+계획 6번 항목. 5절의 `reader.py`를 노드에 붙이고, 설정은 YAML로, 결과 확인은 디버그 토픽으로, 회귀 방지는 pytest로 정리한다.
+이 단계가 끝나면 `ros2 launch simulation full_system.launch.py world:=factory`로 통합 검증할 수 있다.
+
+### 6.1 최종 파일 구조
+
+```
+gauge_ocr/
+  gauge_ocr/
+    __init__.py
+    gauge_ocr_node.py     # ROS 입출력만 (6.4)
+    reader.py             # 5.6절 순수 함수
+    overlay.py            # 디버그 그림 (6.5)
+  config/
+    gauge_corridor.yaml
+    gauge_factory.yaml
+  launch/gauge_ocr.launch.py
+  test/
+    test_reader.py        # 6.6
+  tools/
+    bag_to_png.py         # 3.4절
+    try_reader.py         # 5.7절
+  package.xml
+  setup.py
+```
+
+### 6.2 파라미터 YAML
+
+```yaml
+# config/gauge_factory.yaml
+gauge_ocr:                    # 노드 이름과 같아야 적용된다
+  ros__parameters:
+    phi_min: 225.0            # 최소값 바늘 각도 (12시 기준 시계 방향, 도)
+    sweep: 270.0
+    v_min: 0.0
+    v_max: 10.0               # 단위·범위는 수현과 맞춘 값 (4.6절)
+    window: 15                # 중앙값 프레임 수 (15 Hz → 1초)
+    stop_speed: 0.05
+    require_stop: true
+    publish_debug: true
+```
+
+- 1.6절에서 본 것처럼 **선언하지 않은 파라미터는 무시**된다. YAML에 쓴 이름은 전부 노드에서 `declare_parameter`해야 한다.
+- 타입은 선언 기본값에서 정해진다. `v_max: 10`(int)으로 쓰면 `10.0`(float)으로 선언한 파라미터와 타입이 달라 에러 → YAML에도 소수점을 붙인다.
+- HSV 범위까지 파라미터로 빼면 실험은 편하지만 YAML이 길어진다. 처음엔 게이지 사양·필터 값만 빼고, 마스크 범위는 시뮬 조명이 바뀔 때 뺀다.
+- corridor와 factory 게이지가 같은 모델이면 두 YAML 내용이 같다. 그래도 파일을 둘로 나눠 두면 나중에 게이지 사양을 월드별로 다르게 할 수 있다.
+
+### 6.3 설치·런치 연결
+
+`setup.py` — patrol_path와 같은 방식으로 config 설치 항목 추가:
+
+```python
+data_files=[
+    ...
+    (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
+    (os.path.join("share", package_name, "config"), glob("config/*.yaml")),   # 추가
+],
+```
+
+`launch/gauge_ocr.launch.py` — `world` 인자로 YAML을 고른다:
+
+```python
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
+
+world = LaunchConfiguration("world")
+params_file = PathJoinSubstitution(
+    [FindPackageShare("gauge_ocr"), "config", ["gauge_", world, ".yaml"]]   # 리스트 = 문자열 이어 붙이기
+)
+Node(
+    package="gauge_ocr",
+    executable="gauge_ocr_node",
+    name="gauge_ocr",
+    output="screen",
+    parameters=[params_file, {"world": world, "use_sim_time": True}],       # 뒤에 오는 값이 덮어씀
+)
+```
+
+`package.xml` 의존성 추가:
+
+```xml
+<exec_depend>cv_bridge</exec_depend>
+<exec_depend>python3-opencv</exec_depend>
+<exec_depend>python3-numpy</exec_depend>
+<exec_depend>nav_msgs</exec_depend>
+<exec_depend>launch_ros</exec_depend>
+```
+
+- `setup.py`에 config를 추가한 뒤에는 **다시 빌드**해야 `install/` 아래로 복사된다. `--symlink-install`이어도 새 파일은 빌드해야 링크가 생긴다.
+- `FindPackageShare`는 `install/gauge_ocr/share/gauge_ocr`를 가리킨다. 소스 폴더가 아니다.
+
+### 6.4 노드 — ROS 입출력만
+
+```python
+"""카메라 영상에서 게이지 ROI를 잡고 지침/숫자를 판독한다."""
+
+from collections import deque
+import math
+
+from cv_bridge import CvBridge, CvBridgeError
+from nav_msgs.msg import Odometry
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Image
+from std_msgs.msg import Float32, String
+
+from gauge_ocr.overlay import draw_overlay
+from gauge_ocr.reader import GaugeSpec, read_gauge
+
+
+class GaugeOcrNode(Node):
+    def __init__(self) -> None:
+        super().__init__("gauge_ocr")
+        self.declare_parameter("world", "corridor")
+        self.declare_parameter("phi_min", 225.0)
+        self.declare_parameter("sweep", 270.0)
+        self.declare_parameter("v_min", 0.0)
+        self.declare_parameter("v_max", 10.0)
+        self.declare_parameter("window", 15)              # 중앙값 프레임 수
+        self.declare_parameter("stop_speed", 0.05)        # m/s 미만이면 정차
+        self.declare_parameter("require_stop", True)      # False면 항상 판독 (bag·단독 테스트용)
+        self.declare_parameter("publish_debug", True)
+
+        self._bridge = CvBridge()
+        self._buf = deque(maxlen=self.get_parameter("window").value)
+        self._status = ""
+        self._speed = 0.0
+
+        self.create_subscription(Image, "/camera/image", self.camera_image_cb, qos_profile_sensor_data)
+        self.create_subscription(String, "/mission/status", self.status_cb, 10)
+        self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
+        self.pub_0 = self.create_publisher(Float32, "/inspection/gauge", 10)
+        self.pub_debug = self.create_publisher(Image, "/inspection/gauge_debug", qos_profile_sensor_data)
+        self.create_timer(0.5, self._tick)
+        self.get_logger().info("gauge_ocr started (운학)")
+
+    def _spec(self) -> GaugeSpec:
+        g = lambda n: self.get_parameter(n).value  # noqa: E731
+        return GaugeSpec(g("phi_min"), g("sweep"), g("v_min"), g("v_max"))
+
+    def _at_gauge(self) -> bool:
+        if not self.get_parameter("require_stop").value:
+            return True
+        return self._status.startswith("goto:gauge") and self._speed < self.get_parameter("stop_speed").value
+
+    def status_cb(self, msg: String) -> None:
+        self._status = msg.data
+
+    def odom_cb(self, msg: Odometry) -> None:
+        v = msg.twist.twist.linear
+        self._speed = math.hypot(v.x, v.y)
+
+    def camera_image_cb(self, msg: Image) -> None:
+        if not self._at_gauge():
+            self._buf.clear()                             # 다른 게이지 값이 섞이지 않게
+            return
+        try:
+            bgr = self._bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        except CvBridgeError as e:
+            self.get_logger().warn(f"cv_bridge: {e}")
+            return
+        value, dbg = read_gauge(bgr, self._spec())
+        if not math.isnan(value):
+            self._buf.append(value)
+        if self.get_parameter("publish_debug").value and self.pub_debug.get_subscription_count() > 0:
+            out = self._bridge.cv2_to_imgmsg(draw_overlay(bgr, value, dbg), encoding="bgr8")
+            out.header = msg.header
+            self.pub_debug.publish(out)
+
+    def _tick(self) -> None:
+        if not self._buf:
+            return                                        # 판독값 없음 → 발행 안 함 (대시보드는 마지막 값 유지)
+        out = Float32()
+        out.data = float(np.median(self._buf))
+        self.pub_0.publish(out)
+
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = GaugeOcrNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+설계 포인트:
+- **판독은 카메라 콜백, 발행은 타이머.** 기존 스켈레톤의 0.5 s 타이머를 유지해 대시보드가 받는 주기를 바꾸지 않았다.
+- **판독값이 없으면 발행하지 않는다.** `Float32`에 NaN을 담아 보내면 rosbridge가 JSON으로 바꿀 때 표준에 없는 `NaN`(또는 `null`)이 되고, 대시보드 `app.js`의 `m.data.toFixed(1)`이 깨질 수 있다. 발행을 멈추면 대시보드는 마지막 값을 그대로 보여 준다. 수현과 확인할 사항.
+- 정차 중이 아니면 버퍼를 비운다. 게이지 1에서 2로 이동했을 때 1의 값이 섞여 나오지 않게.
+- `require_stop: false`로 두면 정차 판정 없이 항상 판독한다. bag 재생에 `/mission/status`가 없거나 노드를 혼자 테스트할 때 쓴다.
+- 디버그 이미지는 **구독자가 있을 때만** 만든다(`get_subscription_count()`). 오버레이 그리기와 변환은 공짜가 아니다.
+- `window`는 생성자에서 `deque(maxlen=...)`로 한 번만 읽는다. 실행 중 `ros2 param set`으로 바꿔도 반영되지 않으므로, 바꾸려면 노드를 재시작하거나 파라미터 콜백을 단다(1.6절).
+
+### 6.5 디버그 토픽 — `/inspection/gauge_debug`
+
+```python
+import math
+
+import cv2
+import numpy as np
+
+
+def draw_overlay(bgr: np.ndarray, value: float, dbg: dict) -> np.ndarray:
+    """판독 결과를 그린 복사본. 디버그 토픽·보고서 캡처용."""
+    out = bgr.copy()
+    d = dbg.get("dial")
+    if d is not None:
+        cv2.ellipse(out, ((d.cx, d.cy), (d.w, d.h), d.angle), (0, 255, 0), 2)
+        phi = dbg.get("phi", float("nan"))
+        if not math.isnan(phi):
+            r = max(d.w, d.h) / 2
+            a = math.radians(phi)                                  # 12시 기준 시계 방향
+            tip = (int(d.cx + r * math.sin(a)), int(d.cy - r * math.cos(a)))
+            cv2.line(out, (int(d.cx), int(d.cy)), tip, (255, 0, 255), 2)
+        org = (int(d.cx - d.w / 2), max(int(d.cy - d.h / 2) - 8, 15))
+    else:
+        org = (10, 25)
+    text = "gauge: ---" if math.isnan(value) else f"gauge: {value:.2f}"
+    cv2.putText(out, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+    return out
+```
+
+- 초록 타원 = 검출한 원판, 자홍 선 = 판독한 바늘 방향, 노랑 글씨 = 값. 빨간 실제 바늘 위에 자홍 선이 겹치면 맞은 것이다.
+- `out.header = msg.header`로 원본 스탬프를 그대로 쓴다(2.6절). Foxglove에서 `/camera/image`와 나란히 놓으면 프레임이 맞는다.
+- 보고서 캡처는 Foxglove Image 패널에서 이 토픽을 열고 저장한다.
+
+### 6.6 단위 테스트 — 합성 게이지로
+
+시뮬 없이 돌아가는 테스트가 핵심이다. OpenCV로 게이지를 그려 정답을 아는 입력을 만든다(5.8절 측정에 쓴 코드와 같다).
+
+```python
+import math
+
+import cv2
+import numpy as np
+import pytest
+
+from reader import GaugeSpec, find_dial, phi_to_value, read_gauge
+
+
+def synth_gauge(phi_deg: float, squash: float = 1.0, size=(640, 480), center=(320, 200), r=50) -> np.ndarray:
+    """남색 배경 + 흰 원판 + 빨간 한쪽 바늘 + 검은 허브. squash < 1이면 세로로 눌림(올려다본 효과)."""
+    big = 4  # 크게 그려서 줄이면 안티앨리어싱
+    W, H = size[0] * big, size[1] * big
+    img = np.full((H, W, 3), (76, 66, 56), np.uint8)
+    c = (center[0] * big, center[1] * big)
+    R = r * big
+    cv2.circle(img, c, R, (230, 242, 242), -1, cv2.LINE_AA)
+    a = math.radians(phi_deg)
+    tip = (int(c[0] + 0.83 * R * math.sin(a)), int(c[1] - 0.83 * R * math.cos(a)))
+    cv2.line(img, c, tip, (13, 13, 230), int(0.07 * R), cv2.LINE_AA)
+    cv2.circle(img, c, int(0.1 * R), (25, 25, 25), -1, cv2.LINE_AA)
+    img = cv2.resize(img, size, interpolation=cv2.INTER_AREA)
+    if squash != 1.0:
+        M = np.float32([[1, 0, 0], [0, squash, center[1] * (1 - squash)]])
+        img = cv2.warpAffine(img, M, size, borderValue=(76, 66, 56))
+    return img
+
+
+SPEC = GaugeSpec()
+
+
+@pytest.mark.parametrize("value", [0.0, 2.5, 5.0, 7.5, 10.0, 3.3])
+def test_front_view(value):
+    phi = (SPEC.phi_min + value / 10.0 * SPEC.sweep) % 360
+    v, dbg = read_gauge(synth_gauge(phi), SPEC)
+    assert abs(v - value) < 0.1, (v, dbg.get("phi"))
+
+
+@pytest.mark.parametrize("value", [1.0, 5.0, 9.0])
+def test_oblique(value):
+    phi = (SPEC.phi_min + value / 10.0 * SPEC.sweep) % 360
+    v, _ = read_gauge(synth_gauge(phi, squash=0.75), SPEC)
+    assert abs(v - value) < 0.15
+
+
+def test_no_gauge():
+    blank = np.full((480, 640, 3), (76, 66, 56), np.uint8)
+    v, _ = read_gauge(blank, SPEC)
+    assert math.isnan(v)
+
+
+def test_dial_center():
+    d = find_dial(synth_gauge(0.0))
+    assert abs(d.cx - 320) < 1.5 and abs(d.cy - 200) < 1.5
+
+
+def test_wraparound():
+    assert phi_to_value(225.0, SPEC) == pytest.approx(0.0)
+    assert phi_to_value(0.0, SPEC) == pytest.approx(5.0)
+    assert phi_to_value(135.0, SPEC) == pytest.approx(10.0)
+    assert phi_to_value(170.0, SPEC) == pytest.approx(10.0)   # 죽은 구간, 최대 쪽에 가까움
+    assert phi_to_value(200.0, SPEC) == pytest.approx(0.0)    # 죽은 구간, 최소 쪽에 가까움
+```
+
+```bash
+colcon build --symlink-install --packages-select gauge_ocr
+colcon test --packages-select gauge_ocr --pytest-args -k test_reader
+colcon test-result --verbose            # 실패 내용 보기
+# 또는 빠르게 (패키지 루트에서, ROS 환경 불필요)
+cd module2_inspection/gauge_ocr && python3 -m pytest test/test_reader.py -q
+```
+
+- 테스트 파일에서 `from gauge_ocr.reader import ...`로 바꾼다(위 예시는 스크래치 폴더에서 돌린 형태라 `from reader import`).
+- `package.xml`의 `ament_flake8`·`ament_pep257` 테스트도 같이 돈다. 한 줄 100자 초과, docstring 형식 등에서 실패할 수 있으니 `colcon test-result`로 확인한다.
+- 테스트 대상: 정면·사선 판독 정확도, 게이지 없음 → NaN, 원판 중심 위치, 랩어라운드·죽은 구간 매핑. 버그를 고칠 때마다 그 상황을 재현하는 테스트를 하나씩 추가한다.
+- 시뮬 캡처 PNG 몇 장을 `test/data/`에 넣고(`git add -f`) 정답과 함께 테스트하면 합성 이미지가 못 잡는 회귀도 잡힌다.
+
+### 6.7 통합 검증 순서
+
+1. bag 재생 + 노드 단독: `ros2 bag play <bag>` / `ros2 launch gauge_ocr gauge_ocr.launch.py world:=factory` (`require_stop`이 문제되면 `ros2 param set /gauge_ocr require_stop false`)
+2. Foxglove에서 `/inspection/gauge_debug` 확인, `ros2 topic echo /inspection/gauge`
+3. 통합 런치: `ros2 launch simulation full_system.launch.py world:=factory` → 로봇이 `gauge_line1`에 정차한 5 s 동안 값이 나오는지
+4. 대시보드(수현)에서 게이지 값 표시 확인
+5. 결과를 REPORT.md "게이지 판독 오차"에 기록: 정답 대비 평균·최대 오차, 판독 성공률, 정차 후 첫 값까지 걸린 시간
+
+### 6.8 실습 체크리스트
+
+- [ ] `config/gauge_*.yaml` 작성, `setup.py` data_files 추가 후 빌드 → `install/gauge_ocr/share/gauge_ocr/config/`에 파일 생겼는지 확인
+- [ ] 런치에서 YAML이 적용되는지 `ros2 param get /gauge_ocr v_max`로 확인
+- [ ] `ros2 param set /gauge_ocr v_max 16.0` → 판독값 스케일이 바뀌는지 확인 (`_spec()`이 매번 다시 읽음)
+- [ ] `/inspection/gauge_debug`를 Foxglove에서 열어 초록 타원·자홍 선 확인
+- [ ] `colcon test` 통과 (flake8·pep257 포함)
+- [ ] 6.7절 1~5 순서대로 통합 검증, 정차 중이 아닐 때 발행이 멈추는지 확인
+- [ ] STUDY_PLAN 7절 "수정 예정 사항" 체크
+
+### 6.9 헷갈리기 쉬운 것
+
+- YAML 최상위 키(노드 이름)가 런치의 `name=`과 다르면 **에러 없이 무시**된다. `ros2 param dump /gauge_ocr`로 실제 값 확인.
+- `PathJoinSubstitution`의 마지막 요소에 리스트(`["gauge_", world, ".yaml"]`)를 쓰면 이어 붙인 한 이름이 된다. 문자열 `+`로 `LaunchConfiguration`을 붙이면 에러.
+- 노드 파일에서 `from reader import ...`(상대 경로 없이)로 쓰면 설치 후 import 에러. 패키지 이름을 붙여 `from gauge_ocr.reader import ...`.
+- 테스트에서 `rclpy`를 import하지 않게 한다. 순수 함수만 테스트하면 Mac 로컬에서도 돈다.
+- `get_subscription_count()`는 Foxglove가 구독해도 1 이상이 된다. 시연 중 CPU가 부족하면 `publish_debug: false`.
+
+### 6.10 참고
+
+- 런치에서 파라미터 파일 넘기기: https://docs.ros.org/en/jazzy/How-To-Guides/Launch-file-different-formats.html
+- 파라미터 YAML 형식: https://docs.ros.org/en/jazzy/How-To-Guides/Node-arguments.html
+- ament_python 패키지 테스트: https://docs.ros.org/en/jazzy/Tutorials/Intermediate/Testing/Python.html
+- `colcon test`: https://colcon.readthedocs.io/en/released/reference/verb/test.html
