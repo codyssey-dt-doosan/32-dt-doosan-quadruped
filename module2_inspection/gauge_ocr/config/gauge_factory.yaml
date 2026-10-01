@@ -1,0 +1,11 @@
+# gauge_ocr 파라미터 (factory). 게이지 사양은 시뮬 게이지 모델에 바늘이 들어가면 그 값에 맞춘다.
+gauge_ocr:
+  ros__parameters:
+    phi_min: 225.0          # 최소값 바늘 각도 (12시 기준 시계 방향, 도)
+    sweep: 270.0            # 최소 → 최대 시계 방향 스윕 (도)
+    v_min: 0.0
+    v_max: 10.0
+    window: 15              # 중앙값 프레임 수 (15 Hz → 1초)
+    stop_speed: 0.05        # m/s 미만이면 정차로 본다
+    require_stop: true      # false면 정차 판정 없이 항상 판독 (bag·단독 테스트용)
+    publish_debug: true
