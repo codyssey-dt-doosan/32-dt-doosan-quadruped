@@ -360,7 +360,170 @@ cv2.imwrite(os.path.join(dump_dir, f"pair_{tag}.png"), side)
 
 ## 3. 열화상 센서 방향 결정 + 발열체 모델 협의
 
-> 계획 3번 항목. 협의 후 기입.
+계획 3번 항목. STUDY_PLAN 3절의 선택지 (1) 흑백 카메라 유지 / (2) Gazebo 열화상 센서 중 하나를 고르고, **무엇이 뜨거운지**(발열체)와 **어디서 보는지**(정차점)를 시뮬 담당·태우·채현과 정한다.
+이 결정에 따라 이후 코드의 입력 형식(`mono8` 밝기 vs `mono16` 켈빈)이 달라지므로 5번 구현 전에 끝내야 한다.
+
+### 3.1 지금 `/thermal/image`의 실체
+
+`simulation/models/go2/model.sdf` 81행:
+
+```xml
+<sensor name="thermal" type="camera">        <!-- type이 thermal이 아니라 camera -->
+  <pose>0.28 0 0.02 0 0 0</pose>
+  <update_rate>10</update_rate>
+  <topic>thermal</topic>
+  <camera>
+    <horizontal_fov>1.0</horizontal_fov>
+    <image><width>320</width><height>240</height><format>L8</format></image>
+```
+
+- 일반 카메라가 장면을 렌더링한 뒤 **흑백으로 바꾼 것**이다. 픽셀값 = 밝기(조명 × 재질 색), 온도와 무관하다.
+- 예: 가스탱크 재질은 빨강(diffuse 0.75, 0.18, 0.14) → 밝기 ≈ 0.3·0.75 + 0.59·0.18 + 0.11·0.14 ≈ 0.34 → 픽셀 약 90. 반대로 **흰 게이지 원판이 가장 "뜨겁게"** 나온다.
+- 즉 지금 상태로 임계값 검출을 하면 "흰 물체 검출기"가 된다.
+
+### 3.2 두 선택지 비교
+
+| 항목 | (1) 흑백 카메라 유지 | (2) Gazebo 열화상 센서 |
+|------|----------------------|------------------------|
+| 센서 SDF | 그대로 | `type="thermal"`로 변경 |
+| 발열체 표현 | 재질을 흰색·`<emissive>`로 밝게 | visual에 `Thermal` 시스템 플러그인 + `<temperature>` (켈빈) |
+| 픽셀 의미 | 밝기 0~255 | 온도 (L16: 켈빈 × 100, L8: 지정 범위로 양자화) |
+| 오탐 | 흰 벽·원판·조명 반사도 "뜨거움" | 온도를 지정한 물체만 뜨거움 |
+| 보고서 표기 | "밝기 200 이상" | **"최고 87 ℃, 임계 70 ℃"** |
+| 렌더링 | 일반 카메라 | ogre2 필요 (factory·corridor 월드 모두 이미 `<render_engine>ogre2</render_engine>`) |
+| 위험 | 없음 | Docker CPU 렌더링(Mesa)에서 thermal 센서가 정상 출력되는지 **미확인** |
+
+**결정 방침: (2)를 시도하고, Docker에서 안 되면 (1)로 대체한다.**
+코드는 두 경우 모두 돌도록 "픽셀값 → 온도(또는 밝기) 배열"을 바꾸는 함수 하나로 입력을 추상화한다(3.5절). 그러면 이후 정렬·검출 코드는 그대로다.
+
+### 3.3 (2) Gazebo 열화상 센서 설정
+
+센서 쪽 (`go2/model.sdf`의 `thermal` 센서 교체):
+
+```xml
+<sensor name="thermal" type="thermal">
+  <pose>0.28 0 0.02 0 0 0</pose>
+  <always_on>true</always_on>
+  <update_rate>10</update_rate>
+  <topic>thermal</topic>                       <!-- 그대로 두면 브리지 설정 변경 불필요 -->
+  <camera>
+    <horizontal_fov>1.0</horizontal_fov>
+    <image><width>320</width><height>240</height><format>L16</format></image>
+    <clip><near>0.05</near><far>15</far></clip>
+  </camera>
+</sensor>
+```
+
+발열체 쪽 (뜨겁게 할 visual 안에):
+
+```xml
+<visual name="visual">
+  <geometry>...</geometry>
+  <material>...</material>
+  <plugin filename="gz-sim-thermal-system" name="gz::sim::systems::Thermal">
+    <temperature>358.15</temperature>          <!-- 켈빈. 85 ℃ -->
+  </plugin>
+</visual>
+```
+
+픽셀 → 온도:
+
+| `<format>` | ROS `encoding` | 변환 | 비고 |
+|------------|----------------|------|------|
+| `L16` | `mono16` | `T[K] = 픽셀 × 0.01` (기본 해상도 0.01 K) | 0.01 K 단위, 범위 넉넉. **권장** |
+| `L8` | `mono8` | `T[K] = min_temp + 픽셀 × resolution` | 센서에 `gz-sim-thermal-sensor-system` 플러그인으로 `min_temp`·`max_temp`·`resolution` 지정 |
+
+- 온도를 지정하지 않은 물체는 **주변 온도**로 렌더링된다. 월드의 `<atmosphere>` 설정에 따른다.
+- 위 플러그인 이름·변환식은 Gazebo Harmonic 예제 월드(`gz-sim` 저장소 `examples/worlds/thermal_camera.sdf`)를 기준으로 정리했다. 실제 버전에서 그대로 되는지는 **Docker 안에서 예제 월드를 먼저 띄워 확인**한다: `gz sim -s -r thermal_camera.sdf` → `gz topic -e -t /thermal_camera --json-output | head`로 픽셀값 확인.
+- 브리지(`ros_gz_bridge.yaml`)는 타입이 같은 `gz.msgs.Image`라 바꿀 필요가 없다. 인코딩만 `mono8` → `mono16`으로 바뀐다(2.1절 표).
+
+### 3.4 어디서 보나: 가스탱크 정차점 기하
+
+열화상 화각: 수평 반각 = 0.5 rad ≈ **28.6°**, 수직 반각 = `atan(120 / 293)` ≈ **22.3°** (`fx = 160 / tan(0.5) ≈ 293 px`).
+카메라 높이는 스폰 높이 0.4 + 0.02 = 약 0.42 m. 가스탱크 `gas_tank_1`은 (8, −6), 반지름 0.35 m, 높이 0 ~ 1.5 m.
+
+| 정차점 y (태우 웨이포인트) | 탱크 표면까지 거리 | 열화상에 보이는 폭 | 보이는 높이 범위 | 탱크 폭(열화상 px) | 판정 |
+|---------------------------|-------------------|--------------------|------------------|--------------------|------|
+| **−5.0 (현재)** | 0.37 m | 0.40 m | 0.27 ~ 0.57 m | 554 px (화면 320 px) | 탱크가 화면을 **꽉 채움** |
+| −4.0 | 1.37 m | 1.50 m | −0.14 ~ 0.98 m | 150 px | 탱크 전체 폭 + 바닥이 보임 |
+| −3.5 | 1.87 m | 2.04 m | −0.35 ~ 1.19 m | 110 px | 여유 있음, 발열체는 작아짐 |
+
+계산: 거리 = (정차점 y − 0.28) − (−6 + 0.35), 보이는 폭 = 2 · 거리 · tan 28.6°.
+
+- 현재 정차점에서는 화면 전체가 탱크 표면 한 조각이다. 탱크 전체를 뜨겁게 하면 **화면 전체가 과열**, 아니면 아무것도 없음 → "과열 영역을 찾아 표시"가 성립하지 않는다.
+- 정차점을 **y = −4.0** 정도로 물리면 탱크와 주변이 함께 보여 "어디가 뜨거운지"를 보여 줄 수 있다.
+- 단, `gas_tank` 정차점은 **가스 측정(채현)도 쓰는 지점**(dwell 8 s)이다. 거리를 늘리면 가스 센서 값이 달라질 수 있으니 채현과 같이 정한다. 합의가 안 되면 열화상 전용 정차점을 하나 추가하는 안도 있다.
+
+### 3.5 발열체 정하기
+
+| 안 | 내용 | 장단점 |
+|----|------|--------|
+| 가. 탱크 전체 가열 | `gas_tank/model.sdf` visual에 온도 지정 | 간단. 그러나 모델을 공유하는 `gas_tank_2`도 같이 뜨거워짐 |
+| **나. 과열 부품 별도 모델** (권장) | `hot_valve` 같은 작은 모델(예: 0.15 × 0.08 × 0.15 m 박스)을 `gas_tank_1` 앞면 (8, −5.64, 0.5)에 include, 85 ℃ | 과열 "영역"이 생김. 탱크 본체는 30 ℃ 정도로 두면 "주변보다 뜨거운 곳" 검출이 자연스럽다. `gas_tank_2`는 정상 대조군 |
+| 다. 배관·모터 신규 모델 | 공장 라인 옆에 과열 모터 추가 | 시나리오는 좋지만 정차점·순찰 경로 추가 필요 |
+
+나안의 높이 0.5 m는 3.4절 표에서 y = −4.0일 때 보이는 범위(−0.14 ~ 0.98 m) 안이다.
+
+온도 설정 예 (보고서·임계값의 근거가 되므로 표로 남긴다):
+
+| 물체 | 온도 | 의도 |
+|------|------|------|
+| 주변(지정 안 함) | 약 20 ℃ | 배경 |
+| 탱크 본체 | 30 ℃ (303.15 K) | 약간 따뜻한 정상 설비 |
+| 과열 밸브 | 85 ℃ (358.15 K) | 과열 |
+| 알람 임계 | 60 ℃ 켜짐 / 55 ℃ 꺼짐 | 5번 히스테리시스 |
+
+(1)로 대체할 경우: 과열 밸브만 흰색 + `<emissive>1 1 1 1</emissive>`로 두고, **게이지 원판처럼 흰 물체는 정차점 화면에 들어오지 않는지** 확인한다.
+
+입력 추상화 함수 (5·6번 코드는 이 함수 출력만 쓴다):
+
+```python
+import numpy as np
+
+def to_celsius(img: np.ndarray, encoding: str, l8_min_k: float = 253.15, l8_res: float = 3.0) -> np.ndarray:
+    """열화상 픽셀 → ℃ (float32). (1) 흑백 카메라면 밝기를 그대로 돌려준다(단위 없음)."""
+    if encoding == "mono16":                       # (2) L16: 0.01 K 단위
+        return img.astype(np.float32) * 0.01 - 273.15
+    if encoding == "mono8_thermal":                # (2) L8 + ThermalSensor 플러그인
+        return l8_min_k + img.astype(np.float32) * l8_res - 273.15
+    return img.astype(np.float32)                  # (1) mono8 밝기
+```
+
+- 센서가 L8 열화상인지 일반 흑백인지는 ROS 메시지 인코딩(`mono8`)만으로 구별이 안 된다. 그래서 `"mono8_thermal"`은 노드 파라미터(`thermal_mode`)로 정해 넘긴다.
+
+### 3.6 협의 항목 정리
+
+| 대상 | 내용 | 결정 |
+|------|------|------|
+| 시뮬 담당 | 선택 (1)/(2), `thermal` 센서 `type="thermal"` + L16 교체 | |
+| 시뮬 담당 | 발열체 안(가/나/다), `hot_valve` 모델 추가, 온도 표 | |
+| 시뮬 담당 | corridor 월드에도 발열체를 둘지 (현재 corridor에는 열화상 대상이 없음 → 항상 정상) | |
+| 태우 + 채현 | `gas_tank` 정차점 y −5.0 → −4.0 변경 또는 열화상 전용 정차점 추가 | |
+| 수현 | 대시보드에 최고 온도(℃) 표시 추가 여부 | |
+
+### 3.7 실습 체크리스트
+
+- [ ] 현재 `/thermal/image`에서 흰 물체(게이지 원판)가 가장 밝게 나오는 것을 확인 → (1)의 한계를 눈으로 확인
+- [ ] Docker 안에서 Gazebo 예제 `thermal_camera.sdf`를 헤드리스로 띄워 열화상 토픽이 나오는지 확인 → (2) 가능 여부 결정
+- [ ] (2) 가능하면 로컬에서 `thermal` 센서를 L16으로 바꾸고 `ros2 topic echo --once --field encoding /thermal/image`가 `mono16`인지 확인
+- [ ] 발열체에 온도를 주고, 그 픽셀값 × 0.01 − 273.15가 지정 온도와 맞는지 확인
+- [ ] 3.4절 계산 재현, 현재 정차점에서 열화상이 탱크로 꽉 차는 것을 캡처로 확인 → 협의 자료
+- [ ] 3.6절 협의 결과 기입
+
+### 3.8 헷갈리기 쉬운 것
+
+- `<format>L8</format>`이라고 열화상이 아니다. `type="thermal"`이어야 온도를 렌더링한다.
+- 온도 단위는 **켈빈**. 85 ℃ = 358.15 K. SDF에 85를 넣으면 −188 ℃짜리 물체가 된다.
+- L16 원본을 `"mono8"`로 받거나 `uint8`로 캐스팅하면 온도가 뭉개진다(2.1·2.6절). 처리 전에 `to_celsius`로 float 배열로 바꾼다.
+- 모델 파일을 고치면 그 모델을 include한 **모든 인스턴스**가 바뀐다(`gas_tank_1`, `gas_tank_2`). 하나만 바꾸려면 별도 모델.
+- 정차점 변경은 다른 사람 모듈(patrol_path·gas)에 영향을 준다. 혼자 고치지 않는다.
+
+### 3.9 참고
+
+- Gazebo Thermal Camera 튜토리얼: https://gazebosim.org/api/sim/8/thermalcameraigngazebo.html
+- 예제 월드: https://github.com/gazebosim/gz-sim/tree/gz-sim8/examples/worlds (`thermal_camera.sdf`)
+- SDF `<sensor>` 타입 목록: https://sdformat.org/spec?elem=sensor
+- 실제 열화상 카메라의 radiometric 출력(참고): FLIR "radiometric" 개념
 
 ## 4. rosbag 녹화 + 동일 스탬프 PNG 쌍 확보
 
