@@ -527,7 +527,215 @@ def to_celsius(img: np.ndarray, encoding: str, l8_min_k: float = 253.15, l8_res:
 
 ## 4. rosbag 녹화 + 동일 스탬프 PNG 쌍 확보
 
-> 계획 4번 항목. 학습 후 기입.
+계획 4번 항목. rosbag 기본(명령, MCAP, `/clock` 재생 문제, `rosbag2_py` 읽기)은 [gauge_ocr/STUDY.md 3절](../gauge_ocr/STUDY.md#3-rosbag-녹화와-오프라인-데이터셋)과 같다.
+여기서는 이 패키지에서 달라지는 것만 다룬다: ① 녹화할 토픽과 용량, ② **두 카메라 프레임을 시각 기준으로 짝짓는 법**, ③ 열화상 정답 라벨.
+
+### 4.1 녹화
+
+```bash
+ros2 bag record -o /workspace/bags/factory_thermal_01 \
+  /clock /camera/image /camera/camera_info /thermal/image /odom /tf /mission/status
+```
+
+| 토픽 | 크기 | 초당 |
+|------|------|------|
+| `/camera/image` 640×480×3 B, 15 Hz | 0.92 MB | 13.8 MB/s |
+| `/thermal/image` 320×240×1 B (`mono8`), 10 Hz | 0.077 MB | 0.77 MB/s |
+| `/thermal/image` 320×240×2 B (`mono16`), 10 Hz | 0.15 MB | 1.5 MB/s |
+
+- RGB가 용량 대부분이다. gauge와 마찬가지로 **`gas_tank` 정차 구간(dwell 8 s)만** 녹화한다.
+- 3절에서 센서를 `mono16`으로 바꾸면 그 전에 녹화한 bag은 `mono8`이다. bag 이름에 센서 모드를 넣는다(`factory_thermal_L16_01`).
+- `/thermal/camera_info`는 브리지에 없다(STUDY_PLAN 6절). 열화상 내부 파라미터는 SDF에서 계산한 값(`fx ≈ 293`, `cx = 160`, `cy = 120`)을 쓴다.
+
+### 4.2 "같은 순간"이란 — 두 센서의 시각 관계
+
+두 센서는 같은 Gazebo 시뮬 시계로 스탬프를 찍는다. 15 Hz와 10 Hz이므로:
+- 0.2초마다(15와 10의 공배수) 두 센서가 **정확히 같은 시각**에 찍힌다.
+- 그 사이의 열화상 프레임은 가장 가까운 RGB와 **1/30 ≈ 0.033 s** 차이가 난다.
+- 따라서 짝짓기 허용 오차 `max_dt = 0.05 s`면 모든 열화상 프레임이 짝을 찾는다. 0.033보다 작게 잡으면 0.2초마다만 짝이 생긴다(5 Hz).
+
+로봇이 정차해 있으면 0.033 s 차이는 영상에 아무 차이도 없다. 이동 중 데이터라면 정확히 같은 시각 쌍만 쓰는 편이 정렬 검증에 깨끗하다.
+
+실제 Gazebo는 렌더링이 밀리면 센서 업데이트를 건너뛰기도 하므로, 위 관계를 가정하지 말고 **추출 로그의 dt 분포를 보고** `max_dt`를 정한다. 이 값은 6번의 `ApproximateTimeSynchronizer(slop=...)` 근거가 된다(2.3절 노드 로그의 `dt`와 같은 값).
+
+### 4.3 bag에서 쌍 추출 — 가장 가까운 시각 짝짓기
+
+bag 메시지는 **기록 순서**(수신 시각)로 나온다. 열화상 프레임을 받았을 때 그 직전 RGB가 가장 가깝다는 보장은 없다(바로 다음 RGB가 더 가까울 수 있음).
+그래서 "열화상 시각 이후의 RGB가 한 장 들어올 때까지 기다렸다가" 최근 RGB 몇 장 중 가장 가까운 것을 고른다.
+
+```python
+from collections import deque
+
+
+class NearestPairer:
+    """기록 순서대로 들어오는 RGB·열화상을 header 시각이 가장 가까운 쌍으로 묶는다.
+
+    열화상 하나당 RGB 하나. 열화상 시각 이후의 RGB가 한 장 들어와야 "가장 가까운지" 확정된다.
+    """
+
+    def __init__(self, max_dt: float = 0.05, keep: int = 4):
+        self.max_dt = max_dt
+        self.rgb = deque(maxlen=keep)       # (t, rgb_msg)
+        self.pending = []                   # [(t, thermal_msg)]
+
+    def add_rgb(self, t, msg):
+        self.rgb.append((t, msg))
+        return self._resolve(final=False)
+
+    def add_thermal(self, t, msg):
+        self.pending.append((t, msg))
+        return self._resolve(final=False)
+
+    def flush(self):
+        return self._resolve(final=True)
+
+    def _resolve(self, final):
+        out, keep = [], []
+        latest = self.rgb[-1][0] if self.rgb else None
+        for t, th in self.pending:
+            if not final and (latest is None or latest < t):
+                keep.append((t, th))        # 아직 이후 RGB가 안 옴 → 대기
+                continue
+            if self.rgb:
+                tr, rgb = min(self.rgb, key=lambda x: abs(x[0] - t))
+                if abs(tr - t) <= self.max_dt:
+                    out.append((t, th, tr, rgb))
+        self.pending = keep
+        return out
+```
+
+추출 스크립트 본체 (gauge 3.4절 스크립트에 짝짓기만 추가):
+
+```python
+#!/usr/bin/env python3
+"""bag → rgb_*.png, thermal_raw_*.png, pairs.csv
+
+사용: python3 bag_to_pairs.py <bag_dir> <out_dir> [--max-dt 0.05] [--every 2]
+"""
+import argparse
+import csv
+import os
+
+import cv2
+from cv_bridge import CvBridge
+from rclpy.serialization import deserialize_message
+from rosbag2_py import ConverterOptions, SequentialReader, StorageOptions
+from rosidl_runtime_py.utilities import get_message
+
+from pairer import NearestPairer          # 위 클래스 (같은 폴더)
+
+
+def stamp_sec(msg) -> float:
+    return msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("bag"); ap.add_argument("out")
+    ap.add_argument("--max-dt", type=float, default=0.05)
+    ap.add_argument("--every", type=int, default=2, help="N쌍마다 1쌍 저장")
+    args = ap.parse_args()
+
+    reader = SequentialReader()
+    reader.open(StorageOptions(uri=args.bag, storage_id="mcap"), ConverterOptions("cdr", "cdr"))
+    types = {t.name: t.type for t in reader.get_all_topics_and_types()}
+    bridge, pairer = CvBridge(), NearestPairer(max_dt=args.max_dt)
+    os.makedirs(args.out, exist_ok=True)
+    n = 0
+
+    with open(os.path.join(args.out, "pairs.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["tag", "rgb_file", "thermal_file", "dt_ms", "encoding"])
+
+        def save(pairs):
+            nonlocal n
+            for t_th, th, t_rgb, rgb in pairs:
+                n += 1
+                if n % args.every:
+                    continue
+                s = th.header.stamp
+                tag = f"{s.sec}_{s.nanosec:09d}"                  # 열화상 스탬프 기준 (2.3절과 같은 규칙)
+                cv2.imwrite(os.path.join(args.out, f"rgb_{tag}.png"), bridge.imgmsg_to_cv2(rgb, "bgr8"))
+                cv2.imwrite(os.path.join(args.out, f"thermal_raw_{tag}.png"),
+                            bridge.imgmsg_to_cv2(th, "passthrough"))   # mono8/mono16 그대로
+                w.writerow([tag, f"rgb_{tag}.png", f"thermal_raw_{tag}.png",
+                            f"{(t_rgb - t_th) * 1000:+.1f}", th.encoding])
+
+        while reader.has_next():
+            topic, data, _ = reader.read_next()
+            if topic not in ("/camera/image", "/thermal/image"):
+                continue
+            msg = deserialize_message(data, get_message(types[topic]))
+            if topic == "/camera/image":
+                save(pairer.add_rgb(stamp_sec(msg), msg))
+            else:
+                save(pairer.add_thermal(stamp_sec(msg), msg))
+        save(pairer.flush())
+    print(f"pairs: {n}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- RGB 메시지를 `deque(maxlen=4)`로만 들고 있어 메모리가 일정하다. bag 전체 이미지를 리스트에 담으면 1분짜리도 1 GB 가까이 된다.
+- `max_dt`를 넘는 열화상은 버려진다. 추출 결과 쌍 수가 열화상 메시지 수(`ros2 bag info`)보다 크게 적으면 RGB가 빠진 구간이 있는 것이다.
+- 파일 이름 규칙(`rgb_<tag>`, `thermal_raw_<tag>`)은 2.3절 노드 저장과 같게 맞췄다. 노드로 저장한 쌍과 bag에서 뽑은 쌍을 같은 코드로 처리할 수 있다.
+- 짝짓기 클래스는 가짜 시각열(15 Hz·10 Hz, 기록 순서 지터 포함)로 검증해 두었다: 모든 열화상이 짝을 찾고, 고른 RGB가 항상 가장 가까운 것이었다. 6번에서 단위 테스트로 옮긴다.
+
+### 4.4 데이터셋 구성과 정답
+
+```
+docs/captures/thermal/                 # *.png는 .gitignore로 커밋 안 됨
+  factory_gas_tank_L16_hot_01/          # 과열 밸브 있음 (3.5절 나안)
+    rgb_*.png, thermal_raw_*.png
+    pairs.csv                           # tag, rgb_file, thermal_file, dt_ms, encoding
+    labels.csv                          # tag, hot(0/1), hot_x, hot_y, hot_w, hot_h (RGB 픽셀 박스)
+  factory_gas_tank_L16_normal_01/       # 과열 밸브 온도를 30 ℃로 → 오탐 측정용
+```
+
+정답 라벨이 두 종류 필요하다:
+
+| 라벨 | 쓰임 | 만드는 법 |
+|------|------|-----------|
+| 과열 있음/없음 (`hot`) | 알람 정확도(오탐·미탐) | 장면 설정으로 정해짐. 폴더 단위로 같다 |
+| 과열 위치 박스 (RGB 좌표) | **정렬 정확도** 측정 | 발열체 3D 위치(8, −5.64, 0.5)를 RGB 카메라로 투영하거나, 몇 장은 RGB에서 손으로 박스를 친다 |
+
+- 정렬 검증의 핵심: 열화상에서 찾은 과열 블롭을 5번 정렬식으로 RGB에 옮겼을 때, RGB에서 본 밸브 위치와 몇 px 어긋나는지. 그래서 RGB 쪽 정답 박스가 필요하다.
+- **정상 장면**도 꼭 녹화한다. 과열 장면만 있으면 "항상 과열"을 내는 코드도 100%가 나온다.
+- 거리별 비교(STUDY_PLAN 4.6절, 1·2·5 m)를 하려면 정차 위치만 바꿔 같은 장면을 여러 번 녹화한다. bag 이름에 거리를 넣는다.
+
+### 4.5 16비트 열화상 PNG 확인
+
+```python
+import cv2, numpy as np
+th = cv2.imread("thermal_raw_123_400000000.png", cv2.IMREAD_UNCHANGED)
+print(th.dtype, th.shape)                     # uint16 (240, 320) 이어야 함. uint8이면 IMREAD_UNCHANGED 빠짐
+c = th.astype(np.float32) * 0.01 - 273.15     # 3.5절 to_celsius
+print(f"min {c.min():.1f} ℃, max {c.max():.1f} ℃")   # 과열 장면이면 max ≈ 85
+```
+
+### 4.6 실습 체크리스트
+
+- [ ] `gas_tank` 정차 상태에서 4.1절 명령으로 10초 녹화 → `ros2 bag info`로 `/camera/image` ≈ 150개, `/thermal/image` ≈ 100개 확인
+- [ ] `bag_to_pairs.py`로 쌍 추출, `pairs.csv`의 `dt_ms` 분포 확인 (0과 ±33 근처에 몰리는지) → `max_dt`·6번 `slop` 결정
+- [ ] 쌍 수가 열화상 메시지 수(÷`--every`)와 거의 같은지 확인
+- [ ] `thermal_raw_*.png`를 `IMREAD_UNCHANGED`로 읽어 `dtype` 확인 (L16이면 `uint16`)
+- [ ] 과열 장면·정상 장면 bag을 각각 확보, `labels.csv` 작성
+- [ ] RGB 몇 장에서 과열 밸브 위치 박스를 손으로 기록 (5번 정렬 검증용)
+
+### 4.7 헷갈리기 쉬운 것
+
+- 짝짓기는 **`header.stamp`(센서 시각)** 기준이다. `read_next()`가 주는 세 번째 값(기록 시각)은 수신 시각이라 두 토픽 사이 지연이 섞인다.
+- 열화상 `passthrough`로 받은 `uint16`을 `imwrite`하면 16비트 PNG가 된다. 일반 이미지 뷰어에서는 대비 없는 밋밋한 회색으로 보이는 게 정상이다(20~85 ℃가 픽셀 29300~35800이라 0~65535 범위에서 차이가 아주 작음). 보기용은 컬러맵 파일을 따로 만든다(2.2절).
+- `mono8` 시절 bag과 `mono16` bag을 섞어 튜닝하면 임계값 단위가 달라 엉망이 된다. `pairs.csv`의 `encoding` 열로 걸러 낸다.
+- `--every`로 솎아 낼 때 쌍 단위로 솎아야 한다. 토픽별로 따로 솎으면 짝이 깨진다.
+
+### 4.8 참고
+
+- gauge_ocr/STUDY.md 3절 (rosbag 기본, 시간 문제, `rosbag2_py`)
+- `message_filters` ApproximateTime 알고리즘 설명 (짝짓기 개념 비교): https://wiki.ros.org/message_filters/ApproximateTime
+- OpenCV 16비트 PNG: https://docs.opencv.org/4.x/d4/da8/group__imgcodecs.html
 
 ## 5. 정렬 → 임계 검출 → 오버레이
 

@@ -240,6 +240,6 @@
 1. ROS 2 Python 기초 (노드·토픽·파라미터·런치) — 하루 (gauge_ocr과 공통) → 학습 내용: [STUDY.md](STUDY.md)
 2. cv_bridge로 두 이미지 토픽 받아 PNG 저장까지 — 반나절 → 학습 내용: [STUDY.md 2절](STUDY.md#2-cv_bridge로-두-이미지-토픽-받아-png-저장)
 3. 열화상 센서 방향 결정 (3절) + 발열체 모델 협의 — 병행 → 학습 내용: [STUDY.md 3절](STUDY.md#3-열화상-센서-방향-결정--발열체-모델-협의)
-4. rosbag 녹화 + 동일 스탬프 PNG 쌍 확보
+4. rosbag 녹화 + 동일 스탬프 PNG 쌍 확보 → 학습 내용: [STUDY.md 4절](STUDY.md#4-rosbag-녹화--동일-스탬프-png-쌍-확보)
 5. 오프라인에서 정렬(배율·오프셋) → 임계 검출 → 오버레이 순으로 구현
 6. `message_filters` 동기화 붙여 노드화, 파라미터화·단위 테스트 후 통합 런치에서 검증
