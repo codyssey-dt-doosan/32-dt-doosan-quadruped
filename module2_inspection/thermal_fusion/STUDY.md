@@ -6,6 +6,18 @@ ROS 2 기초는 gauge_ocr과 공통이므로 겹치는 부분은 짧게 쓰고, 
 
 ---
 
+## 0. 실행 환경 — macOS + Docker + Gazebo 확인 창구
+
+gauge_ocr과 완전히 공통이므로 상세는 [gauge_ocr/STUDY.md 0절](../gauge_ocr/STUDY.md#0-실행-환경--macos--docker--gazebo-확인-창구)을 본다. 요점만:
+
+- Mac(Apple Silicon)은 ROS 2 Jazzy·`ros_gz`·`cv_bridge`·`message_filters` 네이티브 불가 → **Docker(Ubuntu 24.04 arm64)**. Jazzy + Harmonic 조합만 arm64 전체 스택이 있다.
+- 화면 확인: **Foxglove Studio**(평소, `ws://localhost:8765`) / **noVNC**(Gazebo GUI·`rqt_image_view` 필요 시, `http://localhost:8080/vnc.html`) / **관제 대시보드**(시연).
+- 이 패키지에서 특히: Foxglove Image 패널을 두 개 열어 `/camera/image`와 `/thermal/image`를 나란히 보면 화각 차이(80° vs 57°)와 정렬 배율을 눈으로 확인할 수 있다.
+- 헤드리스(`gui:=false`)에서도 카메라 센서는 서버 쪽 OGRE2가 CPU(Mesa)로 렌더링하므로 두 이미지 토픽이 나온다. 두 카메라를 CPU로 그리면 RTF가 떨어질 수 있으니 `ros2 topic hz /thermal/image`가 10 Hz 근처인지 확인.
+- 열화상을 진짜 thermal 센서(STUDY_PLAN 3절 선택 2)로 바꾸면 `<render_engine>ogre2</render_engine>`가 필요한데, 소프트웨어 렌더링에서도 동작하는지는 Docker 안에서 별도 확인이 필요하다.
+
+---
+
 ## 1. ROS 2 Python 기초 — 노드·토픽·파라미터·런치
 
 ### 1.1 핵심 개념
@@ -209,7 +221,142 @@ ros2 launch thermal_fusion thermal_fusion.launch.py world:=factory
 
 ## 2. cv_bridge로 두 이미지 토픽 받아 PNG 저장
 
-> 계획 2번 항목. 학습 후 기입.
+계획 2번 항목. cv_bridge 기본(변환 함수, 인코딩, 설치, `imwrite` 주의점)은 [gauge_ocr/STUDY.md 2절](../gauge_ocr/STUDY.md#2-cv_bridge로-이미지-받아-png-저장)과 같으므로 여기서는 **이 패키지에서 달라지는 것**만 적는다:
+① 열화상은 1채널 `mono8`(나중엔 `mono16`일 수 있음), ② 두 토픽을 **같은 순간의 쌍**으로 저장해야 한다.
+
+### 2.1 두 토픽의 인코딩
+
+| 토픽 | SDF `<format>` | ROS `encoding` | `imgmsg_to_cv2` 인자 | numpy |
+|------|----------------|----------------|----------------------|-------|
+| `/camera/image` | (기본) R8G8B8 | `rgb8` | `"bgr8"` | `(480, 640, 3) uint8` |
+| `/thermal/image` | `L8` | `mono8` | `"mono8"` 또는 `"passthrough"` | `(240, 320) uint8` |
+| (thermal 센서로 교체 시) | `L16` | `mono16` | `"passthrough"` (또는 `"mono16"`) | `(240, 320) uint16` |
+
+- 열화상은 `"passthrough"`로 받아도 채널 순서 문제가 없다(1채널). 다만 나중에 `mono16`으로 바뀔 수 있으니 **`msg.encoding`을 보고 분기**하는 습관을 들인다.
+- `mono16`을 `"mono8"`로 요청하면 cv_bridge가 상위 비트를 잘라 버려 온도 정보가 뭉개진다. 16비트는 `uint16`으로 받아서 처리하고, 보기 좋게 만들 때만 8비트로 정규화한다.
+- 수동 변환(원리 확인)은 1채널이라 더 단순하다: `np.frombuffer(msg.data, np.uint8).reshape(msg.height, msg.step)[:, :msg.width]`. `mono16`이면 `dtype=np.uint16`, `step == width*2`, `msg.is_bigendian`이 0인지 확인.
+
+### 2.2 PNG로 저장할 때 열화상의 함정
+
+- `cv2.imwrite`는 `uint8` 1채널 → 8비트 그레이 PNG, **`uint16` 1채널 → 16비트 PNG**를 그대로 지원한다. 온도 데이터를 잃지 않고 저장하려면 정규화하지 말고 `uint16` 그대로 쓴다.
+- 다시 읽을 때는 `cv2.imread(path, cv2.IMREAD_UNCHANGED)`. 기본 `imread`는 8비트 3채널로 바꿔 버린다.
+- 사람이 보기 위한 컬러맵(`cv2.applyColorMap(img8, cv2.COLORMAP_INFERNO)`)은 **보기용 파일을 따로** 만든다. 원본 PNG는 처리용, 컬러맵 PNG는 보고서용으로 이름을 구분한다(`thermal_raw_*.png`, `thermal_view_*.png`).
+
+### 2.3 쌍으로 저장하기 — 최신 RGB 캐시 방식
+
+`message_filters`(1.7절)를 붙이기 전 단계로, 가장 단순한 방법: RGB 콜백은 최신 프레임만 저장해 두고, 열화상 콜백이 올 때 그 프레임과 함께 저장한다.
+로봇이 정차한 상태면 두 프레임의 시각 차이(최대 약 0.07 s)는 무시해도 된다.
+
+```python
+import os
+import cv2
+import numpy as np
+from cv_bridge import CvBridge, CvBridgeError
+from rclpy.duration import Duration
+from rclpy.qos import qos_profile_sensor_data
+
+
+class ThermalFusionNode(Node):
+    def __init__(self) -> None:
+        super().__init__("thermal_fusion")
+        self.declare_parameter("world", "corridor")
+        self.declare_parameter("dump_dir", "")
+        self.declare_parameter("dump_period", 2.0)
+        self._bridge = CvBridge()
+        self._latest_rgb = None          # (stamp, bgr ndarray)
+        self._last_dump = None
+        self._logged = set()
+        self.create_subscription(Image, "/camera/image", self.camera_image_cb, qos_profile_sensor_data)
+        self.create_subscription(Image, "/thermal/image", self.thermal_image_cb, qos_profile_sensor_data)
+        ...
+
+    def _log_once(self, name: str, msg: Image) -> None:
+        if name not in self._logged:
+            self.get_logger().info(f"{name} {msg.width}x{msg.height} {msg.encoding} step={msg.step}")
+            self._logged.add(name)
+
+    def camera_image_cb(self, msg: Image) -> None:
+        self._log_once("camera", msg)
+        try:
+            bgr = self._bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        except CvBridgeError as e:
+            self.get_logger().warn(f"cv_bridge(rgb): {e}"); return
+        self._latest_rgb = (msg.header.stamp, bgr)
+
+    def thermal_image_cb(self, msg: Image) -> None:
+        self._log_once("thermal", msg)
+        try:
+            th = self._bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")   # mono8 → uint8, mono16 → uint16
+        except CvBridgeError as e:
+            self.get_logger().warn(f"cv_bridge(thermal): {e}"); return
+        if self._latest_rgb is None:
+            return                                          # 아직 RGB가 안 들어옴
+        rgb_stamp, bgr = self._latest_rgb
+        self._maybe_dump_pair(msg, bgr, th, rgb_stamp)
+
+    def _maybe_dump_pair(self, th_msg: Image, bgr, th, rgb_stamp) -> None:
+        dump_dir = self.get_parameter("dump_dir").value
+        if not dump_dir:
+            return
+        now = self.get_clock().now()
+        period = Duration(seconds=self.get_parameter("dump_period").value)
+        if self._last_dump is not None and now - self._last_dump < period:
+            return
+        os.makedirs(dump_dir, exist_ok=True)
+        s = th_msg.header.stamp
+        tag = f"{s.sec}_{s.nanosec:09d}"                    # 열화상 스탬프를 쌍의 이름으로
+        dt_ms = ((s.sec - rgb_stamp.sec) * 1e9 + (s.nanosec - rgb_stamp.nanosec)) / 1e6
+        ok_rgb = cv2.imwrite(os.path.join(dump_dir, f"rgb_{tag}.png"), bgr)
+        ok_th = cv2.imwrite(os.path.join(dump_dir, f"thermal_raw_{tag}.png"), th)   # uint8/uint16 그대로
+        view = th if th.dtype == np.uint8 else cv2.normalize(th, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        cv2.imwrite(os.path.join(dump_dir, f"thermal_view_{tag}.png"), cv2.applyColorMap(view, cv2.COLORMAP_INFERNO))
+        self.get_logger().info(f"pair {tag} (rgb-thermal dt={dt_ms:+.1f} ms) ok={ok_rgb and ok_th}")
+        self._last_dump = now
+```
+
+알아둘 점:
+- 파일명은 **열화상 스탬프** 기준으로 통일한다. 열화상이 10 Hz로 더 느리므로 이쪽이 쌍의 기준이 된다.
+- 로그의 `dt`가 ±70 ms를 넘게 계속 나오면 QoS로 프레임이 밀리고 있거나 시계가 다른 것이다. 이 값은 1.7절 `slop` 결정의 근거가 된다.
+- 계획 6번에서 `message_filters`로 바꾸면 `pair_cb(rgb, th)` 안에서 같은 `_maybe_dump_pair`를 부르면 된다. 저장 함수는 그대로 재사용된다.
+
+### 2.4 두 장을 한눈에 비교하는 미리보기 (선택)
+
+정렬 작업(계획 5번) 전에 화각 차이(80° vs 57°)를 눈으로 확인해 두면 좋다. 열화상을 RGB 높이에 맞춰 키운 뒤 옆으로 붙인다.
+
+```python
+view_bgr = cv2.cvtColor(view, cv2.COLOR_GRAY2BGR)              # 1채널 → 3채널 (hconcat은 채널 수가 같아야 함)
+view_bgr = cv2.resize(view_bgr, (int(320 * 480 / 240), 480))    # 높이를 480에 맞춤 → 640×480
+side = cv2.hconcat([bgr, view_bgr])                             # 1280×480
+cv2.imwrite(os.path.join(dump_dir, f"pair_{tag}.png"), side)
+```
+
+이 그림에서 열화상 중앙의 물체가 RGB에서는 더 작게(약 1/1.3배) 보이는 것이 정렬 배율의 출발점이다(STUDY_PLAN 4.2절).
+
+### 2.5 실습 체크리스트
+
+- [ ] `package.xml`에 `cv_bridge`, `python3-opencv`, `python3-numpy` 추가 → 빌드
+- [ ] 첫 프레임 로그: `camera 640x480 rgb8 step=1920`, `thermal 320x240 mono8 step=320` 확인
+- [ ] 열화상을 `"passthrough"`로 받은 배열의 `dtype`·`shape`이 `uint8 (240, 320)`인지 확인
+- [ ] `dump_dir:=/workspace/docs/captures`로 실행해 `rgb_*`, `thermal_raw_*`, `thermal_view_*` 세 파일이 같은 태그로 생기는지 확인
+- [ ] `thermal_raw_*.png`를 `cv2.imread(path, cv2.IMREAD_UNCHANGED)`로 읽어 원본과 `np.array_equal`인지 확인
+- [ ] 로그의 `dt`가 대략 −70 ~ +70 ms 안에 들어오는지 확인 → 1.7절 `slop=0.1` 근거
+- [ ] 로봇을 factory `gas_tank` 정차점 (8, −5)에 두고 가스탱크가 두 이미지 모두에 들어오는 쌍 확보 → 계획 5번 첫 입력. 열화상 화각이 좁아 안 들어오면 STUDY_PLAN 6절 협의 항목
+- [ ] (선택) `pair_*.png` 미리보기로 화각 차이 확인
+
+### 2.6 헷갈리기 쉬운 것
+
+- 열화상 `mono8` 배열을 `bgr` 이미지와 `hconcat`·`addWeighted`하면 채널 수가 달라 에러. `cvtColor(..., COLOR_GRAY2BGR)` 먼저.
+- `mono16`을 `imwrite`할 때 `astype(np.uint8)`로 캐스팅하면 상위 비트가 잘려 엉뚱한 그림이 된다. 보기용은 `cv2.normalize` 또는 `(img / 256).astype(np.uint8)`.
+- `_latest_rgb`를 세팅하기 전에 열화상 콜백이 먼저 오면 `None` → 위 코드처럼 걸러야 한다.
+- 두 구독 중 하나만 `qos_profile_sensor_data`로 바꾸면 한쪽만 밀려 `dt`가 계속 커진다. 둘 다 바꾼다.
+- 저장 경로·시뮬 시계·`imwrite` 반환값 관련 주의점은 gauge_ocr 2.5·2.9절과 동일.
+
+### 2.7 참고
+
+- gauge_ocr/STUDY.md 2절 (cv_bridge 기본, 설치, 수동 변환, Docker 저장 경로)
+- cv_bridge: https://docs.ros.org/en/jazzy/p/cv_bridge/
+- OpenCV 16비트 PNG·`IMREAD_UNCHANGED`: https://docs.opencv.org/4.x/d4/da8/group__imgcodecs.html
+- 컬러맵 종류: https://docs.opencv.org/4.x/d3/d50/group__imgproc__colormap.html
 
 ## 3. 열화상 센서 방향 결정 + 발열체 모델 협의
 

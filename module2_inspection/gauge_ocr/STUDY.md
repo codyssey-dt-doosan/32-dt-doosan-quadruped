@@ -5,6 +5,84 @@
 
 ---
 
+## 0. 실행 환경 — macOS + Docker + Gazebo 확인 창구
+
+STUDY_PLAN 2.5·2.6절의 배경 정리. 2026-09-14 기준.
+
+### 0.1 왜 Docker인가
+
+| 구분 | 내용 |
+|------|------|
+| 내 머신 | macOS 26 (Apple Silicon, arm64) |
+| 문제 | ROS 2 Jazzy는 macOS를 Tier 3로만 지원 → 바이너리 없음, 소스 빌드. Nav2, `ros_gz`, `cv_bridge`, `gz_ros2_control`, `foxglove_bridge`, `rosbridge`는 Mac 빌드 자체가 없음 |
+| Gazebo 단독 | Gazebo Harmonic은 `brew`로 Mac 네이티브 설치가 되지만, 이 프로젝트는 ROS 브리지·Nav2와 함께 써야 하므로 의미 없음 |
+| 결론 | Ubuntu 환경이 필요 → Mac에서 가장 가벼운 방법이 **Docker**. 부수 효과로 팀원·평가자가 `docker compose up` 한 번에 같은 환경을 얻는다(재현성) |
+
+대안 비교:
+- Ubuntu 네이티브 PC / 듀얼부팅: 성능 최고, 장비 필요.
+- UTM·Parallels VM에 Ubuntu 24.04 arm64: GUI 편하지만 Docker보다 무겁고 재현성 낮음.
+- 클라우드(EC2): 이전 프로젝트는 보너스 RL 학습에만 사용.
+
+### 0.2 이전 프로젝트(`plant-robot-digital-twin`)에서 검증된 것
+
+- `osrf/ros:humble-desktop`은 amd64 전용 → Apple Silicon에서 에뮬레이션, 빈 월드 RTF ≈ 0.5.
+- Humble arm64 저장소에는 Gazebo Classic도 `ros-gz-sim`도 없음.
+- **Jazzy + Gazebo Harmonic은 arm64 네이티브로 전체 스택 제공** (`ros-gz-sim`, `gz-ros2-control`, Nav2, Foxglove, rosbridge) → 채택. 이 프로젝트도 같은 조합.
+- 베이스는 `ros:jazzy` 공식 이미지에 필요한 apt 패키지를 직접 얹는 방식. `LIBGL_ALWAYS_SOFTWARE=1`, `QT_X11_NO_MITSHM=1` 환경변수 사용.
+- 참고 파일: `plant-robot-digital-twin/docker/Dockerfile`, `docker/docker-compose.yml`, `docker/smoke_test.sh`.
+
+### 0.3 현재 저장소 Dockerfile·README에서 고칠 점
+
+| 항목 | 현재 | 문제 | 조치 |
+|------|------|------|------|
+| 베이스 이미지 | `osrf/ros:jazzy-desktop` | arm64 태그 여부 미확인 (`docker manifest inspect`가 이 네트워크에서 실패) | 빌드 후 `uname -m`이 `aarch64`인지 확인. 아니면 `ros:jazzy`로 교체 |
+| 소스 반영 | `COPY . /workspace` | 이미지 빌드 시점 스냅샷. 호스트에서 편집해도 반영 안 됨 | `-v $PWD:/workspace` 마운트 + 컨테이너 안 `colcon build --symlink-install` |
+| 실행 방식 | `--network host`, `-v /tmp/.X11-unix` | Linux 전용. Mac에는 X11 소켓이 없고 host 네트워크도 동작이 다름 | `-p 8765:8765 -p 9090:9090`로 포트 명시, GUI는 0.4절 방식 |
+| 의존성 | cv_bridge, message_filters, foxglove_bridge, rosbridge 없음 | 이 패키지 실행 불가 | apt 목록에 추가 |
+| 빌드 산출물 | `build/ install/ log/` | `.gitignore`에 이미 있음 | 마운트 방식이면 호스트 저장소 안에 생기지만 커밋되지 않음 |
+
+### 0.4 Gazebo 화면을 보는 세 가지 방법
+
+**① Foxglove Studio (평소 개발용, 권장)**
+
+```bash
+# 컨테이너 안
+ros2 launch simulation full_system.launch.py world:=factory gui:=false   # gz sim -s -r (서버만)
+ros2 launch foxglove_bridge foxglove_bridge_launch.xml                   # ws 8765
+```
+
+Mac 네이티브 Foxglove Studio 앱 → Open connection → `ws://localhost:8765`.
+로봇 3D 모델·TF·`/camera/image`·`/thermal/image`·토픽 플롯을 Mac GPU로 렌더링하므로 빠르고 안정적.
+단점: Gazebo 월드(벽·계단 메쉬)는 안 보인다. ROS 토픽으로 나오는 것만 보임.
+
+**② noVNC (진짜 Gazebo GUI가 필요할 때)**
+
+- compose에 `theasp/novnc` 컨테이너를 추가하고 sim 컨테이너에 `DISPLAY=novnc:0.0`을 준다.
+- 컨테이너 셸에서 `gz sim -g` 실행 → 브라우저 `http://localhost:8080/vnc.html`.
+- 소프트웨어 렌더링(Mesa) + noVNC 이미지가 amd64라 에뮬레이션까지 겹쳐 느리다. 월드 배치 확인·스크린샷 용도로만.
+- `rqt_image_view`도 X 창이 필요하므로 이 안에서만 뜬다.
+- 루트 README의 대시보드가 같은 8080을 쓰므로 둘 중 하나는 포트를 바꾼다.
+
+**③ 관제 대시보드 (시연·보고서 캡처)**
+
+`rosbridge_server`(9090) → 브라우저에서 `monitoring/web`. 수현 담당.
+
+XQuartz X11 포워딩은 Gazebo OGRE2와 궁합이 나빠 이전 프로젝트에서 noVNC로 대체했다.
+Gazebo GUI 클라이언트만 Mac에 `brew`로 깔아 컨테이너 서버에 붙이는 방법은 gz-transport 멀티캐스트 발견이 Docker Desktop 네트워크를 못 넘어 실용적이지 않다.
+
+### 0.5 헤드리스에서 카메라 센서가 도는 이유
+
+`gui:=false`는 `gz sim -s -r`(서버 전용)이지만, 카메라 센서 렌더링은 서버 쪽 sensors 시스템(OGRE2)이 담당하므로 GUI 없이도 `/camera/image`, `/thermal/image`가 나온다.
+GPU가 없으니 `LIBGL_ALWAYS_SOFTWARE=1`로 Mesa CPU 렌더링을 쓴다. RGB 640×480@15 Hz + 열화상 320×240@10 Hz를 CPU로 그리면 RTF가 떨어질 수 있으니 `ros2 topic hz`와 Gazebo RTF를 함께 확인하고, 느리면 해상도·주기를 낮추는 것을 시뮬 담당과 상의한다.
+
+### 0.6 정리
+
+- Mac에서 ROS 2 스택을 쓰는 이상 Docker가 사실상 유일한 현실적 경로.
+- 평소: headless + Foxglove. 월드 편집·물리 디버깅: noVNC. 시연: 대시보드.
+- 다음 액션: 이전 프로젝트 compose 파일을 가져와 이 저장소 구조(`/workspace`, `full_system.launch.py`)에 맞게 수정.
+
+---
+
 ## 1. ROS 2 Python 기초 — 노드·토픽·파라미터·런치
 
 ### 1.1 핵심 개념
@@ -228,7 +306,192 @@ ros2 launch gauge_ocr gauge_ocr.launch.py world:=factory
 
 ## 2. cv_bridge로 이미지 받아 PNG 저장
 
-> 계획 2번 항목. 학습 후 기입.
+계획 2번 항목. 목표는 **`/camera/image`가 콜백에 들어오는 순간 numpy 배열로 바꿔 PNG로 떨어뜨리는 것**까지다.
+이게 되면 이후 OpenCV 작업(계획 5번)은 시뮬 없이 PNG만으로 진행할 수 있다.
+
+### 2.1 cv_bridge가 하는 일
+
+`sensor_msgs/msg/Image`는 픽셀이 1차원 바이트 배열(`data`)에 `encoding`·`width`·`height`·`step`과 함께 실려 온다.
+`cv_bridge`는 이걸 OpenCV가 쓰는 numpy 배열(H×W×C)로 바꿔 주고, 반대 변환도 해 준다.
+
+| 방향 | 함수 | 이 패키지에서 |
+|------|------|--------------|
+| ROS → OpenCV | `CvBridge().imgmsg_to_cv2(msg, desired_encoding)` | 카메라 프레임 받기 |
+| OpenCV → ROS | `CvBridge().cv2_to_imgmsg(img, encoding)` | 디버그 오버레이 발행 (계획 6번) |
+
+`desired_encoding`에 따라 변환이 달라진다:
+
+| 인자 | 결과 | 언제 |
+|------|------|------|
+| `"passthrough"` | 원본 인코딩 그대로 | 포맷을 그대로 두고 싶을 때. `rgb8`이면 R·B 순서가 OpenCV와 반대 |
+| `"bgr8"` | 3채널, B-G-R 순서 (OpenCV 기본) | **RGB 카메라는 이걸로 받는다** |
+| `"mono8"` | 1채널 8비트 | 흑백이 필요할 때 (`bgr8`로 받고 `cvtColor`해도 됨) |
+| `"mono16"` | 1채널 16비트 (`uint16`) | 진짜 thermal 센서 (thermal_fusion 참고) |
+
+Gazebo 카메라(`simulation/models/go2/model.sdf`의 `camera` 센서)는 포맷을 지정하지 않았으므로 기본값 **`R8G8B8` → ROS `rgb8`**로 온다.
+`imgmsg_to_cv2(msg, "bgr8")`이면 cv_bridge가 R·B 채널을 바꿔 주므로 `cv2.imwrite`로 저장했을 때 색이 맞는다. `"passthrough"`로 받아 그대로 저장하면 빨강·파랑이 뒤바뀐 PNG가 나온다.
+
+### 2.2 설치와 의존성
+
+```bash
+sudo apt install ros-jazzy-cv-bridge python3-opencv     # Docker면 Dockerfile apt 목록에 추가
+python3 -c "import cv_bridge, cv2; print(cv2.__version__)"
+```
+
+`package.xml`에 추가:
+
+```xml
+<exec_depend>cv_bridge</exec_depend>
+<exec_depend>python3-opencv</exec_depend>
+<exec_depend>python3-numpy</exec_depend>
+```
+
+- `cv_bridge`는 apt로 설치되는 시스템 파이썬 모듈이라 `pip`로 깔지 않는다. Jazzy(Ubuntu 24.04)에서 `pip install opencv-python`을 섞으면 apt의 `python3-opencv`와 충돌하므로 **apt만** 쓴다.
+- `import cv_bridge`가 안 되면 `source /opt/ros/jazzy/setup.bash`를 안 한 것이다.
+
+### 2.3 cv_bridge 없이 직접 변환해 보기 (원리 이해용)
+
+cv_bridge가 내부에서 하는 일은 결국 이것이다. 한 번 손으로 해 보면 `step`·`encoding`의 의미가 잡힌다.
+
+```python
+import numpy as np
+
+def image_to_bgr(msg) -> np.ndarray:
+    # data는 길이 height*step 인 바이트 배열. step은 한 행의 바이트 수(패딩 포함 가능)
+    flat = np.frombuffer(msg.data, dtype=np.uint8)
+    rows = flat.reshape(msg.height, msg.step)          # (H, step)
+    img = rows[:, : msg.width * 3].reshape(msg.height, msg.width, 3)
+    if msg.encoding == "rgb8":
+        img = img[:, :, ::-1]                          # RGB → BGR
+    elif msg.encoding != "bgr8":
+        raise ValueError(f"unexpected encoding {msg.encoding}")
+    return np.ascontiguousarray(img)                   # OpenCV 함수에 넘기려면 연속 메모리
+```
+
+- `np.frombuffer`는 복사 없이 뷰를 만든다. `msg`가 살아 있는 동안만 유효하므로 저장해 둘 거면 `.copy()`.
+- `step`이 `width*3`과 같은 게 보통이지만 항상 그렇다고 가정하지 않는다(위 코드처럼 자른다).
+
+### 2.4 노드 콜백에 붙이기 — 주기 저장
+
+현재 `camera_image_cb`는 `del msg`로 프레임을 버린다. 이걸 "N초마다 한 장 PNG 저장"으로 바꾼다.
+
+```python
+import os
+import cv2
+from cv_bridge import CvBridge, CvBridgeError
+from rclpy.duration import Duration
+from rclpy.qos import qos_profile_sensor_data
+
+
+class GaugeOcrNode(Node):
+    def __init__(self) -> None:
+        super().__init__("gauge_ocr")
+        self.declare_parameter("world", "corridor")
+        self.declare_parameter("dump_dir", "")          # 비어 있으면 저장 안 함
+        self.declare_parameter("dump_period", 2.0)      # 초
+        self._bridge = CvBridge()
+        self._last_dump = None
+        self._logged_once = False
+        self.create_subscription(Image, "/camera/image", self.camera_image_cb, qos_profile_sensor_data)
+        ...
+
+    def camera_image_cb(self, msg: Image) -> None:
+        if not self._logged_once:                      # 포맷 확인은 첫 프레임 한 번만
+            self.get_logger().info(f"camera {msg.width}x{msg.height} {msg.encoding} step={msg.step}")
+            self._logged_once = True
+
+        try:
+            bgr = self._bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        except CvBridgeError as e:
+            self.get_logger().warn(f"cv_bridge: {e}")
+            return
+
+        self._latest = bgr                             # 이후 판독 로직은 이 프레임을 쓴다
+        self._maybe_dump(msg, bgr)
+
+    def _maybe_dump(self, msg: Image, bgr) -> None:
+        dump_dir = self.get_parameter("dump_dir").value
+        if not dump_dir:
+            return
+        now = self.get_clock().now()                   # use_sim_time=True 면 시뮬 시계
+        period = Duration(seconds=self.get_parameter("dump_period").value)
+        if self._last_dump is not None and now - self._last_dump < period:
+            return
+        os.makedirs(dump_dir, exist_ok=True)
+        stamp = msg.header.stamp
+        path = os.path.join(dump_dir, f"camera_{stamp.sec}_{stamp.nanosec:09d}.png")
+        if cv2.imwrite(path, bgr):
+            self.get_logger().info(f"saved {path}")
+        else:
+            self.get_logger().warn(f"imwrite failed: {path}")
+        self._last_dump = now
+```
+
+알아둘 점:
+- 파일명에 `header.stamp`를 넣으면 나중에 rosbag·`/odom`과 시각을 맞출 수 있다. 시뮬 시간이라 `0_000000000`처럼 작게 시작한다.
+- `cv2.imwrite`는 **디렉터리가 없거나 확장자가 이상하면 예외 없이 `False`만 돌려준다**. 반환값을 꼭 확인한다.
+- 콜백 안에서 `cv2.imshow`·`cv2.waitKey`는 쓰지 않는다(spin이 막힘). 확인은 저장된 PNG나 Foxglove Image 패널로.
+- 저장 주기 조절은 `ros2 param set /gauge_ocr dump_period 0.5`. 끄려면 `dump_dir`을 빈 문자열로.
+
+실행:
+
+```bash
+ros2 launch gauge_ocr gauge_ocr.launch.py world:=factory      # 런치에 dump_dir 파라미터를 추가하거나
+ros2 run gauge_ocr gauge_ocr_node --ros-args -p dump_dir:=/workspace/docs/captures -p dump_period:=2.0 -p use_sim_time:=true
+```
+
+### 2.5 저장 위치 (Docker일 때)
+
+- 컨테이너 안 경로가 호스트에 마운트된 곳(`/workspace` = 저장소)이어야 Mac에서 파일이 보인다. `/tmp`에 저장하면 컨테이너가 죽을 때 사라진다.
+- `docs/captures/*.png`는 `.gitignore`에 있으므로 그 아래에 마음껏 저장해도 커밋되지 않는다. 보고서에 쓸 캡처만 골라서 `git add -f`.
+- 파일 소유자가 root가 되는 문제(Linux 호스트)는 Docker Desktop for Mac에서는 생기지 않는다.
+
+### 2.6 반대 방향: numpy → Image 발행 (계획 6번 디버그 토픽의 기초)
+
+```python
+out = self._bridge.cv2_to_imgmsg(overlay_bgr, encoding="bgr8")
+out.header = msg.header          # 원본 프레임의 stamp·frame_id를 그대로. Foxglove 시간축·TF가 맞는다
+self.pub_debug.publish(out)
+```
+
+`header`를 안 넣으면 stamp가 0이라 Foxglove에서 이미지가 안 뜨거나 시간축이 어긋난다.
+
+### 2.7 코드 없이 저장하는 방법 (비교용)
+
+| 방법 | 명령 | 비고 |
+|------|------|------|
+| `image_view` 패키지의 `image_saver` | `ros2 run image_view image_saver --ros-args -r image:=/camera/image -p filename_format:=frame%04d.png` | `ros-jazzy-image-view` 설치 필요. 빠른 확인용 |
+| Foxglove Image 패널 | 패널 메뉴 → Download image | 한 장씩. 보고서 캡처에 편함 |
+| rosbag → 나중에 추출 | 계획 3번 | 반복 실험에는 이쪽 |
+
+노드에 직접 넣는 이유는 "판독 로직이 실제로 받는 프레임"을 그대로 남기기 위해서다. 인코딩 변환까지 같은 코드를 타므로 오프라인 튜닝 결과가 노드에서 그대로 재현된다.
+
+### 2.8 실습 체크리스트
+
+- [ ] `python3 -c "import cv_bridge, cv2"` 성공 (Docker면 이미지 재빌드 후)
+- [ ] `package.xml`에 `cv_bridge`, `python3-opencv`, `python3-numpy` 추가 → `colcon build --packages-select gauge_ocr`
+- [ ] 첫 프레임 로그에서 `640x480 rgb8 step=1920` 확인
+- [ ] 2.3의 수동 변환과 `imgmsg_to_cv2(msg, "bgr8")` 결과가 같은지 `np.array_equal`로 확인
+- [ ] `dump_dir:=/workspace/docs/captures`로 실행해 PNG가 Mac 파인더에서 보이는지 확인. 색(빨강/파랑)이 맞는지 눈으로 확인
+- [ ] 로봇을 factory `gauge_line1` 앞에 세워 놓고 게이지가 찍힌 프레임 한 장 확보 → 계획 5번의 첫 입력
+- [ ] `ros2 param set`으로 `dump_period`를 바꿔 저장 간격이 바뀌는지 확인
+- [ ] 저장된 PNG를 `cv2.imread`로 다시 읽어 `shape == (480, 640, 3)` 확인
+
+### 2.9 헷갈리기 쉬운 것
+
+- **색이 뒤집힘**: `passthrough`로 받은 `rgb8`을 `imwrite`하면 R·B가 바뀐다. `bgr8`로 받거나 `cvtColor(img, COLOR_RGB2BGR)`.
+- `imwrite`가 조용히 실패: 디렉터리 없음, 경로에 확장자 없음, 배열이 `float`(0~1)인데 그대로 저장 → `uint8`로 변환(`(img*255).astype(np.uint8)`).
+- `np.frombuffer` 결과는 읽기 전용이다. 픽셀을 수정하려면 `.copy()`.
+- QoS를 `qos_profile_sensor_data`로 바꾸지 않으면 프레임이 밀려서 저장되는 이미지가 몇 초 전 것일 수 있다.
+- `use_sim_time`이 켜졌는데 시뮬이 안 돌면 `get_clock().now()`가 멈춰 있어 `dump_period` 판정이 영원히 안 된다. `ros2 topic hz /clock` 확인.
+- PNG는 무손실이라 640×480 한 장에 수백 KB. 저장 주기를 짧게 오래 돌리면 금방 커진다.
+
+### 2.10 참고
+
+- cv_bridge 튜토리얼 (ROS 2): https://docs.ros.org/en/jazzy/p/cv_bridge/
+- `sensor_msgs/msg/Image` 정의와 인코딩 문자열: https://docs.ros2.org/latest/api/sensor_msgs/msg/Image.html , `sensor_msgs/image_encodings.hpp`
+- OpenCV `imread`/`imwrite`: https://docs.opencv.org/4.x/d4/da8/group__imgcodecs.html
+- Gazebo 카메라 센서 SDF (`<format>` 기본값 R8G8B8): https://sdformat.org/spec?elem=sensor
 
 ## 3. rosbag 녹화와 오프라인 데이터셋
 

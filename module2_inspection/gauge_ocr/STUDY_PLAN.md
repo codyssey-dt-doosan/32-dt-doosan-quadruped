@@ -80,15 +80,35 @@
 - [ ] `colcon build --symlink-install --packages-select gauge_ocr`
 - [ ] `colcon test` + pytest: 영상처리 함수는 노드와 분리한 순수 함수로 두고 PNG 입력으로 단위 테스트
 
-### 2.5 환경 준비 체크리스트
+### 2.5 실행 환경 결정 — macOS에서는 Docker
 
-- [ ] Ubuntu 24.04 + ROS 2 Jazzy + Gazebo Harmonic (루트 README apt 목록)
-- [ ] 추가 설치: `ros-jazzy-cv-bridge`, `python3-opencv`, `ros-jazzy-rqt-image-view`, `ros-jazzy-ros2bag`
-- [ ] `ros2 launch simulation full_system.launch.py world:=factory` 정상 기동 확인
-- [ ] `rqt_image_view`에서 `/camera/image` 확인
+내 개발 머신은 **macOS (Apple Silicon, arm64)** 다. ROS 2 Jazzy는 macOS 바이너리가 없고(Tier 3, 소스 빌드만), Nav2·`ros_gz`·`cv_bridge`·`gz_ros2_control`은 Mac 빌드가 아예 없다.
+따라서 루트 README의 apt 목록은 **네이티브 Ubuntu 24.04 PC가 있을 때만** 쓰고, Mac에서는 **Docker(Ubuntu 24.04 arm64 컨테이너)** 로 돌린다.
+자세한 정리는 [STUDY.md 0절](STUDY.md#0-실행-환경--macos--docker--gazebo-확인-창구).
+
+- [x] Docker Desktop 설치 확인 (`docker --version`) — 확인됨 (29.x)
+- [ ] 베이스 이미지 아키텍처 확인: 현재 `Dockerfile`은 `osrf/ros:jazzy-desktop`. arm64 태그가 없으면 에뮬레이션(RTF ≈ 0.5)이므로 이전 프로젝트처럼 `ros:jazzy` 공식 이미지 + 패키지 직접 설치로 바꾼다
+  - 이전 프로젝트 검증: Humble 계열은 arm64에 `ros-gz-sim` 없음, **Jazzy + Harmonic만 arm64 네이티브 전체 스택 제공**
+- [ ] `Dockerfile`에 이 패키지용 의존성 추가: `ros-jazzy-cv-bridge`, `ros-jazzy-rqt-image-view`, `ros-jazzy-ros2bag`, `ros-jazzy-foxglove-bridge`, (대시보드용) `ros-jazzy-rosbridge-server`
+- [ ] 루트 README의 `docker run --network host -v /tmp/.X11-unix` 방식은 **Linux 전용**. Mac에서는 `-p 8765:8765 -p 9090:9090`로 포트를 명시하고 X11 소켓 마운트는 뺀다 → `docker-compose.yml`로 정리 (이전 프로젝트 `plant-robot-digital-twin/docker/docker-compose.yml` 참고)
+- [ ] 저장소를 `-v $PWD:/workspace`로 마운트해 호스트에서 편집 → 컨테이너에서 `colcon build --symlink-install` (Dockerfile의 `COPY . /workspace`는 빌드 시점 스냅샷이라 편집이 반영되지 않는다)
+- [ ] 컨테이너 안에서 `ros2 launch simulation full_system.launch.py world:=factory gui:=false` 정상 기동 확인 (`gui:=false` → `gz sim -s -r`, 서버만)
+- [ ] `LIBGL_ALWAYS_SOFTWARE=1`로 카메라 센서가 CPU 렌더링되는지 확인: `ros2 topic hz /camera/image`가 15 Hz 근처인지, RTF가 얼마나 떨어지는지 기록
+- [ ] `foxglove_bridge` 실행 후 Mac의 Foxglove Studio에서 `ws://localhost:8765` 접속
+- [ ] Foxglove **Image 패널**(또는 noVNC 안 `rqt_image_view`)에서 `/camera/image` 확인
 - [ ] 게이지 앞(factory `gauge_line1` (10, 8.7, 1.5))에서 프레임 캡처해 `docs/captures/`에 저장
-- [ ] rosbag 하나 녹화해두기
-- [ ] `Dockerfile`에 cv_bridge 의존성 추가 필요 여부 확인
+- [ ] rosbag 하나 녹화해두기 (컨테이너 안 경로가 마운트된 저장소 밖이면 호스트로 안 나온다 → `docs/captures/` 아래나 마운트 경로에 저장)
+
+### 2.6 Gazebo 화면 확인 창구 (셋 중 상황별 선택)
+
+| 창구 | 언제 | 방법 | 비고 |
+|------|------|------|------|
+| **Foxglove Studio** (주력) | 개발 중 토픽·이미지·TF 확인 | 컨테이너에서 `ros2 launch foxglove_bridge foxglove_bridge_launch.xml` → Mac 앱에서 `ws://localhost:8765` | Mac GPU 렌더링이라 빠름. Gazebo 월드 자체(벽·메쉬)는 안 보이고 ROS 토픽만 보임 |
+| **noVNC** | 월드 배치·물리 확인, 스크린샷 | compose에 `theasp/novnc` 컨테이너 추가, sim 컨테이너 `DISPLAY=novnc:0.0` → 브라우저 `http://localhost:8080/vnc.html`, 컨테이너에서 `gz sim -g` | 소프트웨어 렌더링 + amd64 에뮬레이션이라 느림. 대시보드 `http.server 8080`과 포트 충돌 → 하나는 다른 포트로 |
+| **관제 대시보드** | 시연·보고서 캡처 | `rosbridge_server`(9090) + `monitoring/web` | 수현 담당 |
+
+- `rqt_image_view`도 X 창이 필요하므로 noVNC 안에서만 뜬다. 평소엔 Foxglove Image 패널로 대체.
+- XQuartz X11 포워딩은 Gazebo OGRE2와 궁합이 나빠 이전 프로젝트에서 noVNC로 대체했다.
 
 ---
 
@@ -206,8 +226,9 @@
 
 ## 8. 학습 순서 정리
 
+0. 실행 환경(macOS + Docker) 정리 + Gazebo 확인 창구 — 완료 → [STUDY.md 0절](STUDY.md)
 1. ROS 2 Python 기초 (노드·토픽·파라미터·런치) — 하루 → 학습 내용: [STUDY.md](STUDY.md)
-2. cv_bridge로 `/camera/image` 받아 PNG 저장까지 — 반나절
+2. cv_bridge로 `/camera/image` 받아 PNG 저장까지 — 반나절 → 학습 내용: [STUDY.md 2절](STUDY.md#2-cv_bridge로-이미지-받아-png-저장)
 3. rosbag 녹화 + PNG 덤프로 오프라인 데이터셋 확보 — 반나절
 4. 게이지 모델 보강 협의 (바늘·눈금) — 병행
 5. OpenCV 원 검출 → 바늘 검출 → 각도·값 매핑 순으로 오프라인 구현
