@@ -739,7 +739,270 @@ print(f"min {c.min():.1f} ℃, max {c.max():.1f} ℃")   # 과열 장면이면 m
 
 ## 5. 정렬 → 임계 검출 → 오버레이
 
-> 계획 5번 항목. 학습 후 기입.
+계획 5번 항목. 4절의 PNG 쌍을 입력으로 **열화상 한 장 + RGB 한 장 → (과열 블롭 목록, 오버레이 그림)** 함수를 오프라인에서 완성한다.
+모두 ROS 없는 순수 함수로 `align.py`, `hotspot.py`, `overlay.py`에 나눈다(STUDY_PLAN 7절 파일 구조).
+
+### 5.1 파이프라인 한눈에
+
+```
+thermal_raw (uint8/uint16)          rgb (bgr8)
+   │ to_celsius (3.5절)                │
+   ▼                                  │
+ ℃ 배열 240×320 ──► find_hot_blobs ──► 블롭 목록 (열화상 좌표) ──► Hysteresis ──► 알람 Bool
+   │                                  │                          │
+   │ warp_to_rgb (H)                  │                          │ map_points (H)
+   ▼                                  ▼                          ▼
+ ℃ 배열 480×640 + 유효 마스크 ──► fuse ──► draw_blobs ──► 오버레이 이미지
+```
+
+- **검출은 열화상 원본 해상도에서** 한다. 정렬로 늘린 이미지에서 검출하면 보간된 값이 섞이고 계산량도 늘어난다.
+- 정렬은 **그림 그릴 때만** 쓴다(열지도 합성 + 박스 좌표 변환).
+
+### 5.2 정렬 이론 — 왜 K만으로 되는가
+
+두 카메라는 같은 `base_link`에 같은 방향(회전 0)으로 붙어 있고 위치만 z로 3 cm 다르다(RGB 0.05, 열화상 0.02).
+
+1. **회전도 이동도 없다면**: 같은 방향의 광선은 두 이미지에서 `p_rgb ~ K_rgb · K_th⁻¹ · p_th`로 대응한다(동차좌표). 이 3×3 행렬이 호모그래피 H다. 거리와 무관하다.
+2. **3 cm 이동(시차)**: 열화상이 아래에 있으므로 같은 물체가 열화상에서는 상대적으로 **위**에 맺힌다. RGB로 옮길 때 아래(+v)로 `Δv = fy_rgb · 0.03 / Z` 만큼 밀어야 한다. Z(물체 거리)에 따라 달라서 **한 거리만 정확**하다.
+
+| 물체 거리 Z | 시차 Δv (RGB px) |
+|-------------|------------------|
+| 0.37 m (현재 `gas_tank` 정차점) | 31 px |
+| 1.37 m (정차점 y −4.0안) | 8 px |
+| 1.87 m | 6 px |
+| 5 m | 2 px |
+
+- 그래서 설계 거리(정차점에서 발열체까지 거리)를 파라미터 `depth`로 두고 그 거리에 맞춘다. 3.4절에서 정차점을 물리자고 한 또 하나의 이유: 가까울수록 거리 오차에 따른 정렬 오차가 커진다.
+- 내부 파라미터: `fx = (W/2) / tan(HFOV/2)`, `cx = W/2`, `cy = H/2`, `fy = fx`. RGB `fx ≈ 381`, 열화상 `fx ≈ 293`, 배율 ≈ **1.30**. 열화상 320×240은 RGB 위에서 약 **417×313** 영역이 된다.
+- RGB는 `/camera/camera_info`의 `K`로 검증할 수 있다(위 계산과 같아야 함). 열화상 camera_info는 브리지에 없어 SDF 값으로 계산한다.
+- (심화) 실제 로봇이라면 두 카메라 사이 회전·이동을 캘리브레이션해야 한다. 열화상에서 보이는 체커보드(가열판)로 스테레오 캘리브레이션을 한다. 시뮬은 SDF에 정확한 값이 있으므로 생략.
+
+### 5.3 `align.py`
+
+```python
+"""열화상 → RGB 정렬. 두 카메라의 내부 파라미터(K)만 쓴다."""
+
+import math
+
+import cv2
+import numpy as np
+
+
+def intrinsics(width: int, height: int, hfov: float) -> np.ndarray:
+    """SDF의 해상도·수평 화각 → K. 정사각 픽셀, 주점 = 이미지 중앙."""
+    fx = (width / 2) / math.tan(hfov / 2)
+    return np.array([[fx, 0, width / 2], [0, fx, height / 2], [0, 0, 1]], np.float64)
+
+
+K_RGB = intrinsics(640, 480, 1.396)
+K_TH = intrinsics(320, 240, 1.0)
+
+
+def thermal_to_rgb_h(k_rgb=K_RGB, k_th=K_TH, baseline_z: float = 0.03, depth: float = 1.5) -> np.ndarray:
+    """열화상 픽셀 → RGB 픽셀 호모그래피.
+
+    두 카메라는 방향이 같고 열화상이 baseline_z(m) 아래에 있다.
+    회전이 없으므로 무한원 호모그래피는 K_rgb · K_th⁻¹, 거리 depth(m)의 물체는 시차만큼 아래로 민다.
+    """
+    h = k_rgb @ np.linalg.inv(k_th)
+    dv = k_rgb[1, 1] * baseline_z / depth              # 열화상이 아래 → 같은 물체가 열화상에선 위에 맺힘 → RGB로 옮길 때 아래(+v)로
+    shift = np.array([[1, 0, 0], [0, 1, dv], [0, 0, 1]], np.float64)
+    return shift @ h
+
+
+def warp_to_rgb(thermal: np.ndarray, h: np.ndarray, rgb_size=(640, 480)) -> tuple[np.ndarray, np.ndarray]:
+    """열화상(2D 배열)을 RGB 해상도로 옮긴다. (옮긴 배열, 유효 영역 마스크)."""
+    warped = cv2.warpPerspective(thermal, h, rgb_size, flags=cv2.INTER_LINEAR)
+    valid = cv2.warpPerspective(np.full(thermal.shape[:2], 255, np.uint8), h, rgb_size, flags=cv2.INTER_NEAREST)
+    return warped, valid
+
+
+def map_points(pts_th: np.ndarray, h: np.ndarray) -> np.ndarray:
+    """열화상 픽셀 좌표 N×2 → RGB 픽셀 좌표 N×2."""
+    return cv2.perspectiveTransform(pts_th.reshape(-1, 1, 2).astype(np.float64), h).reshape(-1, 2)
+```
+
+- `cv2.warpPerspective(src, M, dsize)`에서 M은 **src → dst** 방향이다(내부에서 역행렬로 역매핑). 그래서 열화상 → RGB인 H를 그대로 넣는다. 반대로 넣으면 열지도가 작게 줄어든다.
+- 유효 마스크(`valid`)는 열화상 화각(57°)이 RGB(80°)보다 좁아 생기는 **테두리 빈 영역**을 구분하려고 만든다. 빈 영역을 0 ℃로 칠하면 컬러맵에서 검게 나와 보기 흉하다.
+- 점만 옮길 때는 이미지 전체를 warp하지 말고 `perspectiveTransform`으로 좌표만 바꾼다(블롭 박스).
+
+### 5.4 `hotspot.py` — 임계 검출과 히스테리시스
+
+```python
+"""과열 영역 검출과 알람 히스테리시스. 입력은 ℃ 배열(3.5절 to_celsius 결과)."""
+
+from dataclasses import dataclass
+
+import cv2
+import numpy as np
+
+
+@dataclass
+class Blob:
+    x: int
+    y: int
+    w: int
+    h: int
+    area: int
+    t_max: float
+    cx: float
+    cy: float
+
+
+def find_hot_blobs(temp_c: np.ndarray, threshold: float, min_area: int = 20) -> list[Blob]:
+    mask = (temp_c >= threshold).astype(np.uint8) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))     # 점 노이즈 제거
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    blobs = []
+    for i in range(1, n):                                                          # 0은 배경
+        x, y, w, h, area = stats[i]
+        if area < min_area:
+            continue
+        t_max = float(temp_c[labels == i].max())
+        blobs.append(Blob(int(x), int(y), int(w), int(h), int(area), t_max, *map(float, cents[i])))
+    return sorted(blobs, key=lambda b: b.t_max, reverse=True)
+
+
+class Hysteresis:
+    """켜짐 임계 > 꺼짐 임계, 그리고 N프레임 연속 조건으로 알람 깜빡임을 막는다."""
+
+    def __init__(self, on: float, off: float, n_on: int = 3, n_off: int = 5):
+        assert on > off
+        self.on, self.off, self.n_on, self.n_off = on, off, n_on, n_off
+        self.state = False
+        self._cnt = 0
+
+    def update(self, t_max: float) -> bool:
+        if not self.state:
+            self._cnt = self._cnt + 1 if t_max >= self.on else 0
+            if self._cnt >= self.n_on:
+                self.state, self._cnt = True, 0
+        else:
+            self._cnt = self._cnt + 1 if t_max < self.off else 0
+            if self._cnt >= self.n_off:
+                self.state, self._cnt = False, 0
+        return self.state
+```
+
+| 단계 | 함수 | 이유 |
+|------|------|------|
+| 이진화 | `temp_c >= threshold` | ℃ 배열이므로 numpy 비교로 충분. `cv2.threshold`는 float32에서도 되지만 이게 더 읽기 쉽다 |
+| 노이즈 제거 | `morphologyEx(MORPH_OPEN)` | 침식 → 팽창. 1~2 px 점은 사라지고 큰 블롭은 모양 유지 |
+| 블롭 분리 | `connectedComponentsWithStats` | `findContours`보다 간단히 박스·면적·중심을 한 번에 준다 |
+| 크기 필터 | `area >= min_area` | 노이즈·먼 작은 물체 제외. 열화상 px 기준 |
+| 최고 온도 | `temp_c[labels == i].max()` | 블롭별 최고 온도 → 알람·표시 |
+
+히스테리시스:
+- 켜짐 60 ℃ / 꺼짐 55 ℃처럼 **두 임계를 다르게** 두면 59~61 ℃를 오가는 경계에서 알람이 깜빡이지 않는다.
+- 추가로 **N프레임 연속** 조건: 켜짐은 3프레임(10 Hz → 0.3 s), 꺼짐은 5프레임. 노이즈 한 프레임으로 알람이 울리지 않고, 꺼질 때는 더 신중하게.
+- 입력은 "이번 프레임의 최고 온도"(블롭이 없으면 화면 최고값 또는 −inf). 블롭 개수가 아니라 온도로 판정해야 임계 의미가 명확하다.
+
+### 5.5 `overlay.py` — 열지도 합성과 박스
+
+```python
+"""RGB 위에 정렬된 열지도와 과열 박스를 그린다."""
+
+import cv2
+import numpy as np
+
+from align import map_points        # 패키지에서는 from thermal_fusion.align import map_points
+
+
+def fuse(rgb: np.ndarray, temp_warped: np.ndarray, valid: np.ndarray, t_lo: float, t_hi: float,
+         alpha: float = 0.45) -> np.ndarray:
+    """t_lo~t_hi(℃)를 컬러맵으로 칠해 유효 영역에만 반투명 합성."""
+    norm = np.clip((temp_warped - t_lo) / (t_hi - t_lo), 0, 1)
+    color = cv2.applyColorMap((norm * 255).astype(np.uint8), cv2.COLORMAP_INFERNO)
+    blended = cv2.addWeighted(rgb, 1 - alpha, color, alpha, 0)
+    out = rgb.copy()
+    out[valid > 0] = blended[valid > 0]                 # 열화상 화각 밖은 원본 RGB 그대로
+    return out
+
+
+def draw_blobs(img: np.ndarray, blobs, h: np.ndarray, alert: bool) -> np.ndarray:
+    for b in blobs:
+        corners = np.array([[b.x, b.y], [b.x + b.w, b.y + b.h]], np.float64)
+        (x0, y0), (x1, y1) = map_points(corners, h).astype(int)     # 열화상 박스 → RGB 박스
+        cv2.rectangle(img, (x0, y0), (x1, y1), (0, 0, 255) if alert else (0, 255, 255), 2)
+        cv2.putText(img, f"{b.t_max:.0f}C", (x0, max(y0 - 6, 12)), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(img, "ALERT" if alert else "normal", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                (0, 0, 255) if alert else (0, 200, 0), 2, cv2.LINE_AA)
+    return img
+```
+
+- `applyColorMap`은 `uint8` 입력만 받는다. ℃ → 0~1 정규화 → ×255 → `uint8`. 정규화 범위(`t_lo`~`t_hi`)를 **고정값**(예: 20~90 ℃)으로 두면 프레임마다 색이 바뀌지 않아 비교가 쉽다. 프레임별 min~max로 하면 아무것도 없는 장면에서도 빨간색이 나온다.
+- `addWeighted(rgb, 1−α, color, α, 0)`는 픽셀별 가중합. 유효 마스크 밖은 원본 RGB를 유지한다.
+- 박스는 열화상 좌표 블롭의 두 모서리를 `map_points`로 RGB 좌표로 옮겨 그린다.
+- `cv2.putText`의 Hershey 폰트는 `℃`·한글을 못 그린다. `C`로 쓴다.
+
+### 5.6 합성 데이터로 검증한 결과
+
+시뮬 데이터 없이도 카메라 모델로 정답을 만들 수 있다: 3D 점 하나를 두 카메라에 각각 투영(`u = fx·(−Y/X) + cx`, `v = fy·(−Z/X) + cy`)하고, 열화상 좌표를 `map_points`로 옮긴 결과가 RGB 투영과 같은지 본다.
+
+| 검증 | 결과 |
+|------|------|
+| 설계 거리(1.5 m)의 점 3개 (중앙, 좌하, 우상) | RGB 투영과 **1e-6 px 이내 일치** |
+| 설계 거리 1.5 m로 정렬, 실제 물체는 0.4 m | 약 **21 px** 어긋남 (= 381 · 0.03 · (1/0.4 − 1/1.5)) |
+| 열화상 유효 영역 크기 (RGB 위) | 약 417 × 313 px |
+| 85 ℃ 20×15 px 블롭 + 90 ℃ 단일 픽셀 노이즈 | 블롭 1개만 검출, 박스·최고 온도 정확 |
+| 히스테리시스 (켜짐 3프레임, 꺼짐 2프레임) | 1프레임 저온에 카운트 리셋, 꺼짐 임계 사이 값(58 ℃)에선 유지 |
+
+이 검증 코드는 6번에서 `test/test_align.py`, `test/test_hotspot.py`로 옮긴다.
+
+### 5.7 오프라인 튜닝 흐름
+
+```python
+# tools/try_fusion.py — 4절 데이터셋 폴더를 돌며 오버레이 저장 + 판정 표
+import csv, os, sys
+import cv2, numpy as np
+from thermal_fusion.align import thermal_to_rgb_h, warp_to_rgb
+from thermal_fusion.hotspot import find_hot_blobs
+from thermal_fusion.overlay import draw_blobs, fuse
+
+folder, depth, thr = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+H = thermal_to_rgb_h(depth=depth)
+os.makedirs(os.path.join(folder, "fused"), exist_ok=True)
+for row in csv.DictReader(open(os.path.join(folder, "pairs.csv"))):
+    rgb = cv2.imread(os.path.join(folder, row["rgb_file"]))
+    raw = cv2.imread(os.path.join(folder, row["thermal_file"]), cv2.IMREAD_UNCHANGED)
+    temp = raw.astype(np.float32) * 0.01 - 273.15 if row["encoding"] == "mono16" else raw.astype(np.float32)
+    blobs = find_hot_blobs(temp, thr)
+    warped, valid = warp_to_rgb(temp, H)
+    img = draw_blobs(fuse(rgb, warped, valid, 20, 90), blobs, H, alert=bool(blobs))
+    cv2.imwrite(os.path.join(folder, "fused", f"fused_{row['tag']}.png"), img)
+    print(row["tag"], len(blobs), f"{blobs[0].t_max:.1f}" if blobs else "-")
+```
+
+- 정렬 튜닝: 오버레이에서 열지도 속 밸브와 RGB 밸브가 겹치는지 본다. 위아래로 어긋나면 `depth`, 좌우·전체적으로 어긋나면 K 계산(HFOV 값)을 의심한다.
+- 4.4절의 RGB 정답 박스와 `map_points`로 옮긴 블롭 박스 중심 거리(px)를 재면 정렬 오차가 숫자로 나온다 → REPORT.md.
+- 정상 장면 폴더로 돌려 블롭이 0개인지(오탐) 확인한다.
+
+### 5.8 실습 체크리스트
+
+- [ ] `intrinsics()`로 계산한 RGB K가 `/camera/camera_info`의 `k` 필드와 같은지 확인
+- [ ] 5.6절 합성 검증을 Mac 로컬 venv에서 재현
+- [ ] 4절 쌍 하나로 `warp_to_rgb` 결과를 저장해 RGB 위 약 417×313 영역에 열지도가 놓이는지 확인
+- [ ] `depth`를 0.4 / 1.4 / 2.0으로 바꿔 가며 밸브 정렬이 어떻게 변하는지 오버레이로 비교
+- [ ] 과열 장면에서 블롭 1개, 정상 장면에서 0개 나오는 `threshold`·`min_area` 찾기
+- [ ] 정렬 오차(px)와 오탐·미탐 수를 표로 정리
+
+### 5.9 헷갈리기 쉬운 것
+
+- 이미지 v축은 **아래로** 증가, 카메라 Z(위)와 반대. 시차 보정 부호를 틀리면 오차가 두 배가 된다. 5.6 합성 검증으로 부호를 확인한다.
+- `warpPerspective`의 `dsize`는 `(너비, 높이)` = `(640, 480)`. numpy `shape`는 `(480, 640)`. 순서가 반대.
+- ℃ float 배열을 `warpPerspective`하면 float 그대로 나온다(좋음). `uint16` 원본을 바로 warp하면 보간 결과가 정수로 잘린다 → `to_celsius` 먼저.
+- `connectedComponentsWithStats`의 0번 라벨은 배경이다. `range(1, n)`.
+- `MORPH_OPEN` 커널이 블롭보다 크면 블롭이 사라진다. 멀리서 본 작은 발열체가 안 잡히면 커널부터 의심.
+- `applyColorMap` 결과는 BGR이다. RGB와 섞을 때 순서가 맞는다.
+
+### 5.10 참고
+
+- 호모그래피와 카메라 모델: https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html
+- `warpPerspective`·`perspectiveTransform`: https://docs.opencv.org/4.x/da/d54/group__imgproc__transform.html
+- 모폴로지: https://docs.opencv.org/4.x/d9/d61/tutorial_py_morphological_ops.html
+- `connectedComponentsWithStats`: https://docs.opencv.org/4.x/d3/dc0/group__imgproc__shape.html
+- 컬러맵: https://docs.opencv.org/4.x/d3/d50/group__imgproc__colormap.html
 
 ## 6. message_filters 동기화 노드화·파라미터화·단위 테스트
 
