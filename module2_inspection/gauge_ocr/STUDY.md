@@ -495,7 +495,169 @@ self.pub_debug.publish(out)
 
 ## 3. rosbag 녹화와 오프라인 데이터셋
 
-> 계획 3번 항목. 학습 후 기입.
+계획 3번 항목. 목표는 **시뮬을 한 번만 돌려 녹화해 두고, 이후 판독 알고리즘 개발은 bag과 PNG만으로 반복하는 것**이다.
+Mac + Docker 환경에서는 Gazebo가 CPU 렌더링이라 느리므로 이 단계의 가치가 특히 크다.
+
+### 3.1 rosbag2 기본
+
+| 명령 | 하는 일 |
+|------|---------|
+| `ros2 bag record -o <디렉터리> <토픽...>` | 지정 토픽 녹화. `-o` 디렉터리가 이미 있으면 에러 |
+| `ros2 bag record -a` | 모든 토픽. 이미지·포인트클라우드까지 들어가 금방 커지므로 쓰지 않는다 |
+| `ros2 bag info <디렉터리>` | 길이, 토픽별 메시지 수, 저장 형식 확인 |
+| `ros2 bag play <디렉터리>` | 재생. `--loop`, `--rate 0.5`, `--start-offset 10` |
+
+- Jazzy의 기본 저장 형식은 **MCAP**(`*.mcap`)이다. 예전 자료의 `.db3`(SQLite)와 다르다. Foxglove Studio에서 MCAP 파일을 그대로 열 수 있다.
+- bag은 **디렉터리**(`metadata.yaml` + `*.mcap`)다. 옮길 때 디렉터리째 옮긴다.
+- `.gitignore`에 `*.mcap`, `*.bag`이 있어 실수로 커밋되지 않는다. `metadata.yaml`은 걸러지지 않으니 bag 디렉터리는 `docs/captures/` 밖(예: `bags/`, 저장소 밖 마운트 경로)에 두거나 통째로 add하지 않는다.
+
+### 3.2 무엇을 녹화하나
+
+```bash
+ros2 bag record -o /workspace/bags/factory_gauge_01 \
+  /clock /camera/image /camera/camera_info /odom /tf /mission/status
+```
+
+| 토픽 | 왜 |
+|------|-----|
+| `/camera/image` | 판독 입력 |
+| `/camera/camera_info` | 계획 5번 ROI 투영에 K 행렬 필요 |
+| `/odom`, `/tf` | 프레임마다 로봇 위치·자세 → "어느 거리·각도에서 찍혔나" 기록, 정차 판정 |
+| `/mission/status` | `goto:gauge_line1` 같은 정차점 이름 → 데이터셋 폴더 분류 기준 |
+| `/clock` | 재생할 때 시뮬 시간을 그대로 되살리기 위해 (3.3절) |
+
+용량 감각: 640×480×3 B × 15 Hz ≈ **13.8 MB/s**, 1분이면 약 830 MB. 순찰 한 바퀴를 통째로 녹화하지 말고 **게이지 정차 구간만** 녹화한다.
+- 로봇이 정차점에 도착하면 녹화 시작, dwell(5 s) 끝나면 Ctrl+C. 정차점마다 bag 하나.
+- `--max-bag-duration 60`으로 파일을 잘게 나누거나, `--compression-mode file --compression-format zstd`로 압축할 수 있다(재생 시 자동 해제, 대신 CPU 사용).
+
+### 3.3 재생할 때의 시간 문제
+
+노드는 `use_sim_time=True`로 동작한다. 재생 시 `/clock`을 누가 내느냐에 따라 결과가 다르다.
+
+| 방식 | 명령 | `get_clock().now()` | `header.stamp` | 결과 |
+|------|------|---------------------|----------------|------|
+| **녹화한 `/clock` 재생** (권장) | `ros2 bag play <bag>` | 녹화 당시 시뮬 시간 | 녹화 당시 시뮬 시간 | 둘이 같은 시간축 → 시뮬에서와 똑같이 동작 |
+| bag이 `/clock` 생성 | `ros2 bag play <bag> --clock` | 녹화 당시 **수신 시각**(벽시계) | 시뮬 시간 | 시간축이 어긋남. `/clock`을 녹화하지 않았을 때만 |
+
+- 그래서 3.2절에서 `/clock`을 같이 녹화했다. `--clock`과 녹화된 `/clock`을 동시에 쓰면 시계가 두 개가 되어 시간이 앞뒤로 튄다.
+- 재생 중에는 시뮬을 꺼 둔다. 시뮬과 bag이 같은 토픽을 동시에 내면 섞인다.
+- `--loop` 재생 시 시간이 처음으로 되돌아간다. 2.4절의 `dump_period` 판정처럼 "이전 시각과 비교"하는 코드는 시간이 역행하면(`now < _last_dump`) 리셋하도록 짜 둔다.
+
+### 3.4 bag → PNG 추출 스크립트
+
+노드를 띄워 `dump_dir`로 저장해도 되지만(2.4절), **bag을 직접 읽어 추출**하면 재생 속도와 QoS 손실 없이 모든 프레임을 꺼낼 수 있다.
+`rosbag2_py`는 ROS 2 설치에 포함된 파이썬 API다.
+
+```python
+#!/usr/bin/env python3
+"""bag에서 /camera/image를 PNG로, 프레임별 메타데이터를 CSV로 뽑는다.
+
+사용: python3 bag_to_png.py <bag_dir> <out_dir> [--every N]
+"""
+import argparse
+import csv
+import math
+import os
+
+import cv2
+from cv_bridge import CvBridge
+from rclpy.serialization import deserialize_message
+from rosbag2_py import ConverterOptions, SequentialReader, StorageOptions
+from rosidl_runtime_py.utilities import get_message
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("bag")
+    ap.add_argument("out")
+    ap.add_argument("--every", type=int, default=5, help="N장마다 1장 (15 Hz → 3 Hz)")
+    args = ap.parse_args()
+
+    reader = SequentialReader()
+    reader.open(StorageOptions(uri=args.bag, storage_id="mcap"), ConverterOptions("cdr", "cdr"))
+    types = {t.name: t.type for t in reader.get_all_topics_and_types()}
+
+    bridge = CvBridge()
+    os.makedirs(args.out, exist_ok=True)
+    pose = (float("nan"), float("nan"), float("nan"))   # 가장 최근 /odom (x, y, yaw)
+    status = ""
+    n_img = 0
+
+    with open(os.path.join(args.out, "frames.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["file", "stamp", "x", "y", "yaw", "status"])
+        while reader.has_next():
+            topic, data, _t = reader.read_next()        # 메시지는 기록 순서대로 나온다
+            msg = deserialize_message(data, get_message(types[topic]))
+            if topic == "/odom":
+                p, q = msg.pose.pose.position, msg.pose.pose.orientation
+                yaw = 2.0 * math.atan2(q.z, q.w)   # 평지 가정 (roll·pitch ≈ 0)
+                pose = (p.x, p.y, yaw)
+            elif topic == "/mission/status":
+                status = msg.data
+            elif topic == "/camera/image":
+                n_img += 1
+                if n_img % args.every:
+                    continue
+                s = msg.header.stamp
+                name = f"camera_{s.sec}_{s.nanosec:09d}.png"
+                cv2.imwrite(os.path.join(args.out, name), bridge.imgmsg_to_cv2(msg, "bgr8"))
+                w.writerow([name, f"{s.sec}.{s.nanosec:09d}", *(f"{v:.3f}" for v in pose), status])
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- `read_next()`는 `(토픽, 직렬화된 바이트, 기록 시각 ns)`를 준다. `deserialize_message` + `get_message("sensor_msgs/msg/Image")`로 메시지 객체가 된다.
+- `/odom`은 이미지와 따로 오므로 "이미지 직전의 최신 odom"을 붙인다. 50 Hz 이상이면 오차는 수 cm.
+- 쿼터니언 → yaw: 평지에서 roll·pitch가 0이면 `yaw = 2·atan2(z, w)`. 일반적으로는 `atan2(2(wz+xy), 1−2(y²+z²))`.
+- 이 스크립트는 노드가 아니므로 `rclpy.init()`이 필요 없다. 다만 `source /opt/ros/jazzy/setup.bash`는 해야 `rosbag2_py`가 import된다.
+- 위치: 패키지 안에 넣을 거면 `gauge_ocr/tools/bag_to_png.py`. 설치 대상(`entry_points`)에는 넣지 않는다.
+
+### 3.5 데이터셋 구성
+
+```
+docs/captures/gauge/               # *.png는 .gitignore로 커밋 안 됨
+  factory_gauge_line1_01/
+    camera_123_450000000.png
+    ...
+    frames.csv                     # file, stamp, x, y, yaw, status
+    labels.csv                     # file, needle_deg, value  ← 정답 (4절 모델에서 지정한 값)
+  corridor_gauge_corridor_01/
+  ...
+```
+
+- **정답(label)이 핵심**이다. 시뮬은 바늘 각도를 우리가 정하므로(4절) bag 이름이나 `labels.csv`에 그 값을 반드시 남긴다. 이게 있어야 계획 5번에서 판독 오차를 숫자로 낼 수 있다.
+- 다양성: 바늘 각도 여러 개 × 정차 거리·좌우 오프셋 몇 개. 처음엔 각도 5개(0%, 25%, 50%, 75%, 100%) × 정면 1위치로 시작하고, 알고리즘이 돌면 늘린다.
+- 학습용/검증용 분리는 필요 없다(학습하는 모델이 아님). 대신 **튜닝에 쓴 세트**와 **최종 측정 세트**는 나눈다. 같은 이미지로 튜닝하고 측정하면 오차가 과소평가된다.
+- PNG는 커밋되지 않으므로 팀 공유가 필요하면 bag 디렉터리를 압축해 드라이브로 공유하고, 저장소에는 `frames.csv`·`labels.csv`와 대표 캡처 몇 장만 `git add -f`.
+
+### 3.6 실습 체크리스트
+
+- [ ] 시뮬 실행 → 로봇을 `gauge_line1` 정차점에 세우고 3.2절 명령으로 10초 녹화
+- [ ] `ros2 bag info`로 `/camera/image` 메시지 수가 약 150개(15 Hz × 10 s)인지 확인. 크게 적으면 RTF 저하 → 기록
+- [ ] 시뮬 끄고 `ros2 bag play` → Foxglove에서 이미지가 재생되는지 확인
+- [ ] 재생 중 `ros2 topic echo --once /clock`과 `ros2 topic echo --once --field header.stamp /camera/image`가 같은 시간대인지 확인 (3.3절)
+- [ ] 2.4절 노드를 `dump_dir`과 함께 띄워 bag 재생으로 PNG가 저장되는지 확인 (시뮬 없이 노드 테스트가 되는지)
+- [ ] 3.4절 스크립트로 PNG + `frames.csv` 추출, 메시지 수와 PNG 수(÷`--every`) 일치 확인
+- [ ] Foxglove Studio에서 `.mcap` 파일을 직접 열어 보기
+- [ ] 3.5절 구조로 첫 데이터셋 폴더 만들기 (모델 보강 전이라면 원판만 찍힌 상태로라도)
+
+### 3.7 헷갈리기 쉬운 것
+
+- `-o` 경로를 컨테이너 안 `/root/...`로 주면 Mac에서 안 보이고 컨테이너 삭제 시 사라진다. 마운트 경로(`/workspace/...`) 아래로.
+- 이미지 토픽 QoS가 BEST_EFFORT여도 recorder가 발행자 QoS에 맞춰 구독하므로 녹화는 된다. 다만 CPU가 바쁘면 프레임이 빠진다 → `ros2 bag info`의 메시지 수로 확인.
+- 재생 시 `ros2 bag play`의 기본 QoS는 녹화 당시 발행자 QoS를 따른다. 구독 쪽이 RELIABLE이고 bag 재생이 BEST_EFFORT면 안 맞아 메시지가 안 온다 → 노드 구독을 `qos_profile_sensor_data`로 맞춰 둔 이유.
+- `storage_id="mcap"`인데 예전 `.db3` bag을 열면 에러. `ros2 bag info`의 `Storage id`를 보고 맞춘다.
+- 3.4 스크립트가 `ModuleNotFoundError: rosbag2_py` → ROS 환경 source 안 함.
+
+### 3.8 참고
+
+- rosbag2 튜토리얼: https://docs.ros.org/en/jazzy/Tutorials/Beginner-CLI-Tools/Recording-And-Playing-Back-Data/Recording-And-Playing-Back-Data.html
+- 파이썬으로 bag 읽기: https://docs.ros.org/en/jazzy/Tutorials/Advanced/Reading-From-A-Bag-File-Python.html
+- MCAP 형식·Foxglove: https://mcap.dev/ , https://docs.foxglove.dev/docs/connecting-to-data/local-data
+- 시뮬 시간과 bag 재생: https://docs.ros.org/en/jazzy/Concepts/Intermediate/About-Time.html
 
 ## 4. 게이지 모델 보강
 

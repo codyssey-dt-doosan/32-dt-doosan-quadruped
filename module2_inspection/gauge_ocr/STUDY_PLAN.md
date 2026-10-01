@@ -229,7 +229,7 @@
 0. 실행 환경(macOS + Docker) 정리 + Gazebo 확인 창구 — 완료 → [STUDY.md 0절](STUDY.md)
 1. ROS 2 Python 기초 (노드·토픽·파라미터·런치) — 하루 → 학습 내용: [STUDY.md](STUDY.md)
 2. cv_bridge로 `/camera/image` 받아 PNG 저장까지 — 반나절 → 학습 내용: [STUDY.md 2절](STUDY.md#2-cv_bridge로-이미지-받아-png-저장)
-3. rosbag 녹화 + PNG 덤프로 오프라인 데이터셋 확보 — 반나절
+3. rosbag 녹화 + PNG 덤프로 오프라인 데이터셋 확보 — 반나절 → 학습 내용: [STUDY.md 3절](STUDY.md#3-rosbag-녹화와-오프라인-데이터셋)
 4. 게이지 모델 보강 협의 (바늘·눈금) — 병행
 5. OpenCV 원 검출 → 바늘 검출 → 각도·값 매핑 순으로 오프라인 구현
 6. 파라미터화·디버그 토픽·단위 테스트 정리 후 통합 런치에서 검증
