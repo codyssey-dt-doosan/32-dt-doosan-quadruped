@@ -692,19 +692,6 @@ docs/captures/gauge/               # *.png는 .gitignore로 커밋 안 됨
 계산: 수평 거리 = (원판 앞면 y) − (정차점 y + 0.28), 올려다보는 각 = `atan(높이 차 / 수평 거리)`.
 **50° > 32°이므로 지금 배치로는 게이지가 프레임 위로 벗어나 아예 찍히지 않는다.** 이게 가장 먼저 풀어야 할 협의 사항이다.
 
-**시뮬 실측 확인 (2026-10-01)**: Docker(Jazzy + Gazebo 8.11) 헤드리스로 각 정차점에 로봇을 둔 월드를 띄워 `/camera/image`를 캡처했다.
-
-![게이지 가시성 확인](../../docs/captures/module2/gauge_visibility.png)
-
-| 캡처 | 결과 |
-|------|------|
-| factory `gauge_line1` 정차점, 게이지 z = 1.5 (현재) | 벽만 보이고 **게이지 없음** |
-| corridor `gauge_corridor` 정차점, 게이지 z = 1.4 (현재) | 벽만 보이고 **게이지 없음** |
-| factory 정차점, 게이지 z = 0.7 (안 A, 임시 월드) | 게이지가 화면 중앙 위쪽에 찍힘. 원판 중심 (320, 131), 반지름 **51 px** (계산 50 px), 세로/가로 비 0.99 |
-| 정차점보다 2.1 m 뒤 (10, 5.4), z = 1.5 | 게이지가 화면 위쪽에 작게 찍힘. 원판 반지름 15 px |
-
-원판 중심 v = 131 → 올려다보는 각 `atan((240 − 131) / 381)` ≈ 16°로 계산과 일치한다.
-
 해결안 비교 (원판 반지름의 화면상 크기 = `fx · 0.12 / 거리`):
 
 | 안 | 바꾸는 것 | 올려다보는 각 | 원판 반지름 | 영향 범위 |
@@ -791,7 +778,6 @@ gz service -s /world/factory/set_pose \
 
 - 이때 pose는 **월드 좌표**라 게이지 yaw(−90°)와 바늘 roll ψ를 합성한 쿼터니언을 직접 계산해야 한다. 4.3의 모델 내부 링크 방식보다 계산이 번거롭다.
 - `static` 모델에도 set_pose가 먹는지는 Docker 환경에서 직접 확인이 필요하다(안 되면 바늘 모델만 `<static>false</static>` + 중력 끄기).
-- **주의 (실측)**: 헤드리스 시뮬에서 `go2`를 `set_pose`로 옮겼더니 그 직후부터 `/camera/image`·`/thermal/image` 발행이 멈췄다(RTF가 0.33 → 1.0으로 뛰어 센서 렌더링이 서 버린 것으로 보임). 바늘 모델에서도 같은 일이 생기는지 먼저 확인하고, 안 되면 각도마다 월드 파일을 생성해 재시작하는 방식(4.3)을 쓴다. 로봇 위치를 바꿔 가며 캡처할 때도 월드의 `go2` `<pose>`를 바꾼 임시 월드로 띄우는 편이 안전하다.
 - 순서: 처음엔 4.3 방식(모델 내부 링크 + 스크립트 생성)으로 각도 5개 데이터를 만들고, 반복이 많아지면 이 방식으로 넘어간다.
 
 ### 4.5 눈금 넣기
@@ -819,8 +805,8 @@ gz service -s /world/factory/set_pose \
 ### 4.7 실습 체크리스트
 
 - [ ] 4.2 계산을 직접 재현: `fx`, 반 화각, 정차점별 올려다보는 각
-- [x] 시뮬에서 정차점에 세운 뒤 `/camera/image`에 게이지가 **안 보이는 것**을 실제로 확인 (캡처 남겨 두면 협의 자료가 됨) (2026-10-01 실측, 4.2절 그림)
-- [x] 로컬에서 월드 z를 0.7로 바꿔 보고 보이는지 확인 → 협의 근거 (반지름 51 px로 보임)
+- [ ] 시뮬에서 정차점에 세운 뒤 `/camera/image`에 게이지가 **안 보이는 것**을 실제로 확인 (캡처 남겨 두면 협의 자료가 됨)
+- [ ] 로컬에서 월드 z를 0.7로 바꿔 보고 보이는지 확인 → 협의 근거
 - [ ] `needle_pose()`로 φ = 0°, 90°, 225°를 만들어 넣고, 화면상 바늘이 12시·3시·7시 반을 가리키는지 확인 (ψ = −φ 부호 검증)
 - [ ] 바늘이 원판보다 앞에 보이고 깜빡이지 않는지 확인 (z-fighting)
 - [ ] 4.6 협의 결과를 표에 기입
@@ -870,14 +856,11 @@ BGR 프레임
 | 방법 | 장점 | 단점 |
 |------|------|------|
 | `cv2.HoughCircles` | 교과서적, 원이 부분적으로 가려져도 검출 | 파라미터(`dp`, `param1/2`, `minRadius/maxRadius`) 튜닝이 까다롭고, **타원(사선 뷰)에 약함** |
-| **패널 → 원판 2단계 + `fitEllipse`** (채택) | 어두운 남색 패널을 색으로 먼저 찾고, 그 안에서 패널보다 밝은 원을 찾음. 타원 파라미터가 바로 나와 ②에 그대로 씀 | 패널 색이 바뀌면 HSV 범위 수정 필요 |
+| **색 마스크 + `fitEllipse`** (채택) | 시뮬은 원판이 균일한 흰색이라 마스크가 깨끗함. 타원 파라미터(축 길이·기울기)가 바로 나와 ②에 그대로 씀 | 원판과 비슷한 흰 물체가 있으면 오검출 → 채움률·면적·ROI로 거른다 |
 
-- **왜 2단계인가 (실측)**: 처음엔 "화면에서 흰색(V ≥ 170) 원"을 찾았는데 실제 캡처에서 실패했다. 시뮬 조명에서 원판은 diffuse 0.95인데도 **V ≈ 98**로 렌더링되고, 조명 받은 벽(V ≈ 121)이 더 밝았다. 화면 전체 밝기 임계로는 원판만 골라낼 수 없다.
-  - 실측 HSV: 원판 (30, 8, 98), 패널 (105, 37, 55), 밝은 벽 (100, 6, 121), 어두운 벽 (105, 12, 88), 바닥 (120, 8, 64)
-  - 패널은 **파랑 계열 H(≈105) + 채도 있음 + 어두움**이라 회색 벽·바닥과 구분된다 → 패널을 먼저 찾고, 패널 박스 안에서 Otsu 이진화(자동 임계)로 밝은 쪽 = 원판.
-- 마스크 후 `MORPH_CLOSE`: 빨간 바늘·검은 허브가 원판에 구멍을 내므로 닫아 준다. 안 하면 윤곽선이 바늘 모양으로 파인다. 패널 마스크도 원판 자리가 구멍이므로 크게 닫는다.
+- 마스크 후 `MORPH_CLOSE`: 빨간 바늘·검은 허브가 흰 영역에 구멍을 내므로 닫아 준다. 안 하면 윤곽선이 바늘 모양으로 파인다.
 - **채움률** = 윤곽 면적 / 맞춘 타원 면적. 원판이면 ≈ 1, 흰 사각형 벽 조각이면 낮다. 0.8 미만은 버린다.
-- 패널과 비슷한 색 물체가 많아지면(공장 월드) 계획 STUDY_PLAN 4.1 (가) 방식처럼 **게이지 3D 위치를 투영한 ROI 안에서만** 찾는다. 투영식: `u = fx·(−Y/X) + cx`, `v = fy·(−Z/X) + cy` (카메라 좌표 X 앞, Y 왼쪽, Z 위 → 이미지 u 오른쪽, v 아래). 로봇 자세는 `/odom`, 카메라 오프셋은 (0.28, 0, 0.05).
+- 화면에 흰 물체가 많아지면(공장 월드) 계획 STUDY_PLAN 4.1 (가) 방식처럼 **게이지 3D 위치를 투영한 ROI 안에서만** 찾는다. 투영식: `u = fx·(−Y/X) + cx`, `v = fy·(−Z/X) + cy` (카메라 좌표 X 앞, Y 왼쪽, Z 위 → 이미지 u 오른쪽, v 아래). 로봇 자세는 `/odom`, 카메라 오프셋은 (0.28, 0, 0.05).
 
 ### 5.3 ② 정면화 — 타원을 원으로
 
@@ -951,7 +934,11 @@ class Dial:
 
 # ---------- 1. 원판 찾기 ----------
 
-def _best_ellipse(mask: np.ndarray, min_area: float, min_fill: float):
+def find_dial(bgr: np.ndarray, min_area: float = 300.0, min_fill: float = 0.8) -> Dial | None:
+    """밝고 채도 낮은(흰색) 타원 블롭 중 가장 큰 것."""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 0, 170), (180, 60, 255))           # S 낮고 V 높음 = 흰색
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))  # 바늘이 판 구멍 메우기
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     best = None
     for c in contours:
@@ -960,33 +947,11 @@ def _best_ellipse(mask: np.ndarray, min_area: float, min_fill: float):
             continue
         (cx, cy), (w, h), ang = cv2.fitEllipse(c)
         fill = area / (math.pi * w * h / 4)                         # 타원 면적 대비 채움률 → 사각 물체 배제
-        if fill >= min_fill and (best is None or area > best[0]):
+        if fill < min_fill:
+            continue
+        if best is None or area > best[0]:
             best = (area, Dial(cx, cy, w, h, ang))
     return None if best is None else best[1]
-
-
-def find_dial(bgr: np.ndarray, min_area: float = 100.0, min_fill: float = 0.8) -> Dial | None:
-    """① 어두운 남색 패널을 찾고 ② 그 안에서 패널보다 밝은 원(원판)을 찾는다.
-
-    시뮬에서 원판 밝기(V ≈ 100)는 조명 받은 벽(V ≈ 120)보다 어둡다 → 화면 전체 밝기 임계로는 못 찾는다.
-    """
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    panel = cv2.inRange(hsv, (90, 20, 20), (130, 255, 90))          # 파랑 계열 H, 약간의 채도, 어두움
-    panel = cv2.morphologyEx(panel, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))   # 원판 구멍 메우기
-    contours, _ = cv2.findContours(panel, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    best = None
-    for c in contours:
-        x, y, w, h = cv2.boundingRect(c)
-        if w * h < 2 * min_area:
-            continue
-        roi = gray[y:y + h, x:x + w]
-        _, m = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)   # 패널 안: 밝은 쪽 = 원판
-        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))       # 바늘·허브 구멍 메우기
-        d = _best_ellipse(m, min_area, min_fill)
-        if d is not None and (best is None or d.w * d.h > best.w * best.h):
-            best = Dial(d.cx + x, d.cy + y, d.w, d.h, d.angle)
-    return best
 
 
 # ---------- 2. 타원 → 원 정면화 ----------
@@ -1111,7 +1076,7 @@ print(f"판독 성공 {len(ok)}/{len(errs)}, 평균 오차 {sum(ok)/max(len(ok),
 - [ ] 6절 합성 이미지 생성 함수로 φ = 0, 90, 225°를 만들어 `read_gauge` 결과 확인
 - [ ] `find_dial` 결과를 `cv2.ellipse`로 그려 원판 테두리와 겹치는지 확인 (5.3 함정)
 - [ ] `warpPolar` 결과 이미지를 저장해 바늘이 가로 띠로 보이는지, 몇 번째 행인지 직접 확인
-- [ ] 실제 시뮬 캡처에서 원판·바늘 픽셀 HSV 값을 찍어 `inRange` 범위 조정 (원판·패널은 5.2절 실측값 참고. 바늘은 모델 보강 후)
+- [ ] 실제 시뮬 캡처에서 원판·바늘 픽셀 HSV 값을 찍어 `inRange` 범위 조정
 - [ ] `try_reader.py`로 3절 데이터셋 오차 표 출력 → 5.8 합성 결과와 비교
 - [ ] 판독 실패 이미지 원인 분류(원판 못 찾음 / 바늘 마스크 / 각도 오차)
 
