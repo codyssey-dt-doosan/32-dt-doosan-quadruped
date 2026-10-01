@@ -13,6 +13,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from ros_gz_interfaces.msg import Contacts
 from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import Imu, JointState
@@ -22,12 +23,32 @@ from mpc_controller.balance_node import STANDUP_S, TAU_MAX, blend, gains, gz_unp
 from mpc_controller.body_estimate import FootMemory, com_target, estimate, terrain_frame, yaw_aligned
 from mpc_controller.gait import Gait, raibert, swing_foot, swing_s
 from mpc_controller.leg_kinematics import HIP, HIP_Y, Q_NOM, SIDE, contact_jacobian, ik_clamped
-from mpc_controller.legged_model import JOINTS, LEGS, ros_force_topic
+from mpc_controller.legged_model import JOINTS, LEGS, contact_ros_topic, ros_force_topic
 from mpc_controller.srb_mpc import G, Q_DEFAULT, SrbMpc, reference, state
 
 MPC_EVERY = 4  # IMU 200 Hz / 4 = 50 Hz
 IK_FAIL_HOLD = 20  # 연속 IK 실패 틱(0.1 s) → hold
 Q_NOM12 = np.array(Q_NOM * 4)
+
+
+def sensor_touching(stamps, now: float, hold: float) -> np.ndarray:
+    """발별 마지막 '접촉 있음' 수신 시각 → 지금 닿아 있나. gz contact 센서는 접촉이 있을 때만 발행하므로 신선도로 판정."""
+    return np.array([t is not None and now - t <= hold for t in stamps])
+
+
+def touchdown_delay(leg_phase: float, duty: float, hz: float):
+    """센서 착지 순간 → 스케줄 지지 시작 대비 지연 s(+ 늦음, − 이름). 스윙 전반(s < 0.5) 접촉은 긁힘이라 None."""
+    if leg_phase < duty:
+        return leg_phase / hz
+    return None if swing_s(leg_phase, duty) < 0.5 else (leg_phase - 1.0) / hz
+
+
+def td_summary(td: list) -> str:
+    """착지 지연 목록(s) → 'med/p10/p90/n' ms."""
+    if not td:
+        return "-"
+    a = np.sort(np.asarray(td)) * 1000
+    return f"{np.median(a):.0f}/{np.percentile(a, 10):.0f}/{np.percentile(a, 90):.0f}/{len(a)}"
 
 
 def swing_targets(gait: Gait, est, R, v_ref_G, w_cmd, p, foot_r, lift, k_r, step_max, q_prev, contact):
@@ -71,7 +92,7 @@ class WalkNode(Node):
                 ("inertia", [0.22, 0.48, 0.58]),
                 ("com_offset", [0.0, 0.0, -0.04]),
                 ("height", 0.30),  # 정지 0.30: 0.32는 다리 도달 93%로 특이점 근처라 정지 중 좌굴·전도(실측)
-                ("height_walk", 0.32),  # 보행 0.32: 침하 1.4 cm+lift 0.025가 calf 한계 안(실측)
+                ("height_walk", 0.30),  # 보행도 0.30: 0.32는 실제 몸체가 7 mm 더 떠 착지점에서 다리가 다 펴져 착지가 17 ms 늦음(센서 실측) → 공중 발에 힘 → 전도
                 ("com_shift", 1.0),
                 ("mu", 0.5),
                 ("f_min", 2.0),
@@ -95,6 +116,8 @@ class WalkNode(Node):
                 ("odom_timeout", 0.1),
                 ("v_gain", 1.12),  # 전진 보정 손잡이 — MPC 추종이 89%로 일관(실측), gait_node의 v_gain과 같은 역할
                 ("touch_h", 0.008),
+                ("contact_source", "kinematic"),  # sensor: 조기 착지를 gz 발 contact 센서로 판정(walk.launch 기본). 노드 단독 기본은 센서 없어도 되는 kinematic
+                ("contact_hold", 0.01),
                 ("dump_dir", "/tmp"),
             ],
         )
@@ -120,12 +143,20 @@ class WalkNode(Node):
         self.tilt_deg = 0.0
         self.mode = "run"
         self.imu_count = 0
-        self.stats = {"qp_ms": [], "fail": 0, "sat": 0, "sum_fz": 0.0, "ik_fail": 0, "ik_clamp": 0, "v_est_max": 0.0, "plane_reset": 0, "early": 0, "mpc_extra": 0}
+        self.stats = {"qp_ms": [], "fail": 0, "sat": 0, "sum_fz": 0.0, "ik_fail": 0, "ik_clamp": 0, "v_est_max": 0.0, "plane_reset": 0, "early": 0, "mpc_extra": 0, "scuff": 0}
+        self.td = []  # 센서 착지 지연 s(계측 전용 — walk.launch contact_sensors:=true)
+        self.prev_touch = np.zeros(4, bool)
         self.pubs = [self.create_publisher(Float64, ros_force_topic(j), 10) for j in JOINTS]
         self.create_subscription(JointState, "/joint_states", self._joint_cb, 10)
         self.create_subscription(Imu, "/imu", self._imu_cb, 10)
         self.create_subscription(Twist, "/cmd_vel", self._cmd_cb, 10)
         self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
+        if self.p["contact_source"] not in ("kinematic", "sensor"):
+            raise ValueError(f"contact_source는 kinematic|sensor: {self.p['contact_source']}")
+        # 발 contact 센서(변환본에 있을 때만 발행) — 판정(contact_source:=sensor)과 계측(착지 지연·긁힘) 공용
+        self.touch_stamp = [None] * 4
+        for i, leg in enumerate(LEGS):
+            self.create_subscription(Contacts, contact_ros_topic(leg), lambda m, i=i: self._touch_cb(i, m), 10)
         self.create_timer(1.0, self._status)
         threading.Timer(self.p["start_delay"], self._unpause).start()
         self.get_logger().info("walk started (도훈, C안 지평 MPC 보행)")
@@ -143,6 +174,10 @@ class WalkNode(Node):
     def _cmd_cb(self, msg: Twist) -> None:
         self.cmd = (msg.linear.x, msg.angular.z)
         self.cmd_stamp = self._now()
+
+    def _touch_cb(self, i: int, msg) -> None:
+        if msg.contacts:
+            self.touch_stamp[i] = self._now()
 
     def _odom_cb(self, msg: Odometry) -> None:
         self.odom_v_B = np.array([msg.twist.twist.linear.x, msg.twist.twist.linear.y, 0.0])
@@ -234,12 +269,22 @@ class WalkNode(Node):
                 # 운동학 접촉 판정: 조기 착지만 본다. 공중 판정은 하지 않는다 — 평면이 같은 발들로 추정돼 몸체가 기울면
                 # 실제로 닿은 발이 h>15 mm로 보여 힘이 끊기고 붕괴(실측)
                 h = np.zeros(4)
+                sensor = self.p["contact_source"] == "sensor"
+                touching = sensor_touching(self.touch_stamp, now, self.p["contact_hold"])
+                if self.gait.active:  # 계측: 센서 착지 순간의 스케줄 대비 지연·스윙 전반 긁힘
+                    for i in np.flatnonzero(touching & ~self.prev_touch):
+                        d = touchdown_delay(self.gait.leg_phase(i), self.gait.duty, self.gait.hz)
+                        if d is None:
+                            self.stats["scuff"] += 1
+                        else:
+                            self.td.append(d)
+                self.prev_touch = touching
                 if self.memory.p is not None:
                     o = self.memory.p.mean(axis=0)
                     h = (est.p - o) @ est.n
                     for i in range(4):
                         s = swing_s(self.gait.leg_phase(i), self.gait.duty) if self.gait.active else None
-                        if not contact[i] and s is not None and s > 0.5 and h[i] < self.p["touch_h"]:
+                        if not contact[i] and s is not None and s > 0.5 and (touching[i] if sensor else h[i] < self.p["touch_h"]):
                             contact[i] = True  # 조기 착지: 스윙 PD가 지면을 밀지 않게 즉시 지지로
                             self.stats["early"] += 1
                 # 진단 덤프용 프레임 기록(hold 진입 시에만 파일로 씀) — est·contact·h 확정 직후
@@ -348,7 +393,9 @@ class WalkNode(Node):
             f"calf_min={min(self.q[2::3]) if self.q is not None else 0:.3f} tilt={self.tilt_deg:.2f} "
             f"ik_fail={self.stats['ik_fail']} ik_clamp={self.stats['ik_clamp']} phase={self.gait.phase:.2f} active={int(self.gait.active)} "
             f"v_cmd={self.v_cmd:.2f} w_cmd={self.w_cmd:.2f} v_est_max={self.stats['v_est_max']:.2f} plane_reset={self.stats['plane_reset']} "
-            f"early={self.stats['early']} mpc_extra={self.stats['mpc_extra']}"
+            f"early={self.stats['early']} mpc_extra={self.stats['mpc_extra']} "
+            f"touch={''.join(str(int(b)) for b in sensor_touching(self.touch_stamp, self._now(), 1.0))} "
+            f"td_ms={td_summary(self.td)} scuff={self.stats['scuff']}"
         )
         self.stats["v_est_max"] = 0.0
 

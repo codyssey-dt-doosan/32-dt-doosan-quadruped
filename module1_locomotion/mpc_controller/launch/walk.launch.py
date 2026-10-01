@@ -21,6 +21,7 @@ def _launch_setup(context, *args, **kwargs):
     world_file, legged_yaml, legged_models = write_legged_assets(
         sim_share, world, float(cfg("mu")), 0.0, 0.0, force_ctrl=True, foot_r=0.02, wrench=True,
         ramp_deg=float(cfg("ramp_deg")), damping=0.0, slope_deg=float(cfg("slope_deg")), slope_len=float(cfg("slope_len")),
+        contact=cfg("contact_sensors") == "true" or cfg("contact_source") == "sensor",
     )
     split_gui = gui and sys.platform == "darwin"
     gz_args = f"{world_file}" if gui and not split_gui else f"-s {world_file}"  # -r 없음: 일시정지 시작
@@ -44,6 +45,7 @@ def _launch_setup(context, *args, **kwargs):
         "k_raibert": float(cfg("k_raibert")),
         "v_gain": float(cfg("v_gain")),
         "touch_h": float(cfg("touch_h")),
+        "contact_source": cfg("contact_source"),
     }
     def parse_q_weights(name):
         w = [float(v) for v in cfg(name).split(",")]
@@ -86,6 +88,8 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("k_raibert", default_value="0.03"),
             DeclareLaunchArgument("v_gain", default_value="1.12", description="전진 보정 손잡이 — MPC 추종이 89%로 일관(실측)"),
             DeclareLaunchArgument("touch_h", default_value="0.008", description="조기 착지 판정 높이 m(스윙 후반 발이 평면 위 이 높이 미만이면 지지로)"),
+            DeclareLaunchArgument("contact_source", default_value="sensor", description="조기 착지 판정: sensor(gz 발 contact 센서, 센서 자동 추가) | kinematic(발 높이 < touch_h — 추정 튐에 속아 가짜 착지)"),
+            DeclareLaunchArgument("contact_sensors", default_value="false", description="발 contact 센서만 추가(계측: status td_ms 착지 지연·scuff), 판정은 contact_source"),
             DeclareLaunchArgument("q_weights", default_value="", description="13개 쉼표 구분(rpy3 p3 ω3 v3 g), 비우면 기본"),
             DeclareLaunchArgument("q_weights_walk", default_value="", description="보행 중(gait 활성) Q, 13개 쉼표 구분, 비우면 기본"),
             DeclareLaunchArgument("alpha", default_value="", description="비우면 기본"),

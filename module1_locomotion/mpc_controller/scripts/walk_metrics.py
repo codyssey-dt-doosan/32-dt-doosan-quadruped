@@ -59,7 +59,7 @@ def velocity_track(rows: list, v: float, w: float, after: float) -> dict:
         "v_meas": v_meas, "w_meas": w_meas,
         "err_v": abs(v_meas - v) / max(abs(v), 1e-9) if abs(v) > 1e-9 else abs(v_meas),
         "err_w": abs(w_meas - w) / max(abs(w), 1e-9) if abs(w) > 1e-9 else abs(w_meas),
-        "tilt_max": max(q[3] for q in r), "z_std": (sum((a - zm) ** 2 for a in z) / len(z)) ** 0.5,
+        "tilt_max": max(q[3] for q in r), "z_mean": zm, "z_std": (sum((a - zm) ** 2 for a in z) / len(z)) ** 0.5,
     }
 
 
@@ -69,6 +69,9 @@ def log_stats(path: str) -> dict:
     if lines:
         m = re.search(r"ik_fail=(\d+) ik_clamp=(\d+) phase=([\d.]+) active=(\d)", lines[-1])
         st.update({"ik_fail": int(m.group(1)), "ik_clamp": int(m.group(2)), "active": int(m.group(4))})
+        t = re.search(r"td_ms=(\S+) scuff=(\d+)", lines[-1])
+        if t:
+            st.update({"td_ms": t.group(1), "scuff": int(t.group(2))})
     return st
 
 

@@ -14,6 +14,7 @@ VEL_CTRL = "gz-sim-velocity-control-system"
 POS_CTRL = "gz-sim-joint-position-controller-system"
 FORCE_CTRL = "gz-sim-apply-joint-force-system"
 WRENCH_SYS = "gz-sim-apply-link-wrench-system"
+CONTACT_SYS = "gz-sim-contact-system"
 RAMP_NAME = "balance_ramp"
 RAMP_SIZE, RAMP_T = 3.0, 0.1
 SPAWN_CLEARANCE = 0.4  # go2 기본 스폰 z와 같음
@@ -22,6 +23,14 @@ MODEL_CONFIG = (
     '<?xml version="1.0"?><model><name>go2_legged</name><version>1.0</version>'
     '<sdf version="1.10">model.sdf</sdf></model>'
 )
+
+
+def contact_gz_topic(world: str, leg: str) -> str:
+    return f"/world/{world}/model/go2/link/{leg}_calf/sensor/{leg}_foot_contact/contact"  # <topic> 태그는 무시됨(2026-09-22 스파이크)
+
+
+def contact_ros_topic(leg: str) -> str:
+    return f"/legged_contact/{leg}"
 
 
 def force_topic(joint: str) -> str:
@@ -52,12 +61,15 @@ def make_legged_model(
     force_ctrl: bool = False,
     foot_r: float = 0.0,
     damping: float | None = None,
+    contact: bool = False,
 ) -> str:
     """VelocityControl 제거, 관절별 위치 컨트롤러 12개, 다리 마찰 복원, 관절 스프링 제거.
 
     damping은 None이면 원본(1.0) 유지. 힘 제어(balance)는 0.0 — gz-sim 8.6/DART가 정지 상태에도 감쇠 토크를
     먹어(calf ≈1 N·m) τ=−Jᵀf가 30% 부족해지고 무릎이 한계까지 접힘(2026-09-22 스파이크).
     """
+    if contact and foot_r <= 0:
+        raise ValueError("contact 센서는 발 구(foot_r > 0)에 단다")
     root = ET.fromstring(sdf_text)
     model = root.find("model")
     plugins = model.findall("plugin")
@@ -107,6 +119,11 @@ def make_legged_model(
             ode = ET.SubElement(ET.SubElement(ET.SubElement(col, "surface"), "friction"), "ode")
             ET.SubElement(ode, "mu").text = str(mu)
             ET.SubElement(ode, "mu2").text = str(mu)
+            if contact:
+                sensor = ET.SubElement(link, "sensor", name=f"{link.get('name')[:-5]}_foot_contact", type="contact")
+                ET.SubElement(sensor, "always_on").text = "1"
+                ET.SubElement(sensor, "update_rate").text = "500"
+                ET.SubElement(ET.SubElement(sensor, "contact"), "collision").text = "foot"
     _expect("다리 충돌 마찰", 8, n_mu)
     return ET.tostring(root, encoding="unicode")
 
@@ -134,7 +151,7 @@ def _static_box(name: str, pose: tuple, pitch: float, size: tuple) -> ET.Element
     )
 
 
-def make_legged_world(world_text: str, *, wrench: bool = False, ramp_deg: float = 0.0, slope_deg: float = 0.0, slope_len: float = 3.0) -> str:
+def make_legged_world(world_text: str, *, wrench: bool = False, ramp_deg: float = 0.0, slope_deg: float = 0.0, slope_len: float = 3.0, contact: bool = False) -> str:
     """월드의 model://go2 include를 model://go2_legged로. include 이름(go2)은 유지 → 토픽명 불변."""
     root = ET.fromstring(world_text)
     uris = [u for u in root.iter("uri") if (u.text or "").strip() == "model://go2"]
@@ -144,6 +161,8 @@ def make_legged_world(world_text: str, *, wrench: bool = False, ramp_deg: float 
     world = root.find("world")
     if wrench:
         ET.SubElement(world, "plugin", filename=WRENCH_SYS, name="gz::sim::systems::ApplyLinkWrench")
+    if contact:
+        ET.SubElement(world, "plugin", filename=CONTACT_SYS, name="gz::sim::systems::Contact")
     if ramp_deg:
         include = next(i for i in world.findall("include") if i.find("uri") is uris[0])
         x, y, _z, *rest = include.find("pose").text.split()
@@ -168,7 +187,7 @@ def make_legged_world(world_text: str, *, wrench: bool = False, ramp_deg: float 
     return ET.tostring(root, encoding="unicode")
 
 
-def bridge_entries(*, force: bool = False) -> list:
+def bridge_entries(*, force: bool = False, contact_world: str | None = None) -> list:
     """ros_gz_bridge yaml 항목: /legged/<joint>(Float64) → /model/go2/legged/<joint>."""
     entries = [
         {
@@ -191,6 +210,17 @@ def bridge_entries(*, force: bool = False) -> list:
             }
             for j in JOINTS
         ]
+    if contact_world:
+        entries += [
+            {
+                "ros_topic_name": contact_ros_topic(leg),
+                "gz_topic_name": contact_gz_topic(contact_world, leg),
+                "ros_type_name": "ros_gz_interfaces/msg/Contacts",
+                "gz_type_name": "gz.msgs.Contacts",
+                "direction": "GZ_TO_ROS",
+            }
+            for leg in LEGS
+        ]
     return entries
 
 
@@ -208,6 +238,7 @@ def write_legged_assets(
     damping: float | None = None,
     slope_deg: float = 0.0,
     slope_len: float = 3.0,
+    contact: bool = False,
 ) -> tuple:
     """변환한 모델·월드·브리지 yaml을 임시 dir에 쓰고 (world_file, bridge_yaml, models_dir)를 돌려준다.
 
@@ -220,9 +251,9 @@ def write_legged_assets(
             return f.read()
 
     model_sdf = make_legged_model(
-        read("models", "go2", "model.sdf"), mu, p_gain, d_gain, force_ctrl=force_ctrl, foot_r=foot_r, damping=damping
+        read("models", "go2", "model.sdf"), mu, p_gain, d_gain, force_ctrl=force_ctrl, foot_r=foot_r, damping=damping, contact=contact
     )
-    world_sdf = make_legged_world(read("worlds", f"{world}.sdf"), wrench=wrench, ramp_deg=ramp_deg, slope_deg=slope_deg, slope_len=slope_len)
+    world_sdf = make_legged_world(read("worlds", f"{world}.sdf"), wrench=wrench, ramp_deg=ramp_deg, slope_deg=slope_deg, slope_len=slope_len, contact=contact)
     # ponytail: 실행마다 임시 dir 하나가 남는다(수십 KB). 거슬리면 런치 종료 핸들러에서 삭제
     out = tempfile.mkdtemp(prefix="go2_legged_")
     models_dir = os.path.join(out, "models")
@@ -231,7 +262,7 @@ def write_legged_assets(
         os.path.join(models_dir, "go2_legged", "model.sdf"): model_sdf,
         os.path.join(models_dir, "go2_legged", "model.config"): MODEL_CONFIG,
         os.path.join(out, f"{world}.sdf"): world_sdf,
-        os.path.join(out, "bridge.yaml"): yaml.safe_dump(bridge_entries(force=force_ctrl)),
+        os.path.join(out, "bridge.yaml"): yaml.safe_dump(bridge_entries(force=force_ctrl, contact_world=world if contact else None)),
     }
     for path, text in files.items():
         with open(path, "w", encoding="utf-8") as f:

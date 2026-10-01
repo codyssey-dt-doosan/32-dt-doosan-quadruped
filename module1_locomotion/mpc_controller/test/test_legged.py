@@ -303,3 +303,26 @@ def test_world_slope_adds_three_static_boxes_two_metres_ahead():
     assert make_legged_world(CORRIDOR, slope_deg=0.0) == make_legged_world(CORRIDOR)
     with pytest.raises(ValueError):
         make_legged_world(CORRIDOR, slope_deg=15.0, ramp_deg=15.0)
+
+
+def test_contact_option_adds_foot_sensors_world_system_and_bridge():
+    """contact=True: 발 구마다 contact 센서, 월드에 Contact 시스템, 브리지 GZ→ROS 4개. 기본값은 출력 불변."""
+    from mpc_controller.legged_model import CONTACT_SYS, LEGS, contact_gz_topic, contact_ros_topic
+
+    model = ET.fromstring(make_legged_model(GO2, foot_r=0.02, contact=True)).find("model")
+    sensors = [s for link in model.findall("link") for s in link.findall("sensor") if s.get("type") == "contact"]
+    assert sorted(s.get("name") for s in sensors) == [f"{leg}_foot_contact" for leg in sorted(LEGS)]
+    assert {s.find("contact/collision").text for s in sensors} == {"foot"}
+    with pytest.raises(ValueError):
+        make_legged_model(GO2, contact=True)  # 발 구 없으면 센서 대상 없음
+    assert make_legged_model(GO2, foot_r=0.02, contact=False) == make_legged_model(GO2, foot_r=0.02)
+
+    world = ET.fromstring(make_legged_world(CORRIDOR, contact=True)).find("world")
+    assert any(p.get("filename") == CONTACT_SYS for p in world.findall("plugin"))
+    assert make_legged_world(CORRIDOR, contact=False) == make_legged_world(CORRIDOR)
+
+    c = [e for e in bridge_entries(contact_world="corridor") if e["ros_topic_name"].startswith("/legged_contact/")]
+    assert len(c) == 4 and c[0]["direction"] == "GZ_TO_ROS" and c[0]["ros_type_name"] == "ros_gz_interfaces/msg/Contacts"
+    assert contact_gz_topic("corridor", "FL") == "/world/corridor/model/go2/link/FL_calf/sensor/FL_foot_contact/contact"
+    assert contact_ros_topic("FL") == "/legged_contact/FL"
+    assert bridge_entries() == bridge_entries(contact_world=None)

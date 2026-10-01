@@ -222,3 +222,24 @@ def test_replay_errors_ignores_capture_tail_after_last_command(tmp_path):
     rows = [(0.3 * min(k / 200, 3.0), 0.0, 0.3, 0.0, 0.0, 0.0, None, 100.0 + k / 200) for k in range(1001)]  # 3 s 뒤 정지, 5 s까지
     e = replay_errors(rows, str(cmd), 100.0)
     assert e["rms_v"] < 0.01
+
+
+def test_sensor_touching_uses_freshness():
+    """gz contact 센서는 닿아 있을 때만 발행 — 마지막 수신이 hold 안이면 접촉, None이면 공중."""
+    from mpc_controller.walk_node import sensor_touching
+
+    out = sensor_touching([None, 10.0, 9.995, 9.98], 10.0, 0.01)
+    assert out.tolist() == [False, True, True, False]
+
+
+
+def test_touchdown_delay_sign_and_scuff():
+    """지지 구간 착지 = +지연, 스윙 후반 착지 = −(이름), 스윙 전반 접촉 = 긁힘(None). 3 Hz·duty 0.5."""
+    from mpc_controller.walk_node import td_summary, touchdown_delay
+
+    assert touchdown_delay(0.069, 0.5, 3.0) == pytest.approx(0.023)
+    assert touchdown_delay(0.97, 0.5, 3.0) == pytest.approx(-0.01)
+    assert touchdown_delay(0.6, 0.5, 3.0) is None  # s 0.2
+    assert td_summary([]) == "-"
+    assert td_summary([0.02, 0.023, 0.026]).endswith("/3") and td_summary([0.02, 0.023, 0.026]).startswith("23/")
+
