@@ -22,7 +22,7 @@ from std_msgs.msg import Float64
 from mpc_controller.balance_node import STANDUP_S, TAU_MAX, blend, gains, gz_unpause, joint_torque, q_startup, supervise
 from mpc_controller.body_estimate import FootMemory, com_target, estimate, terrain_frame, yaw_aligned
 from mpc_controller.gait import Gait, raibert, swing_foot, swing_s
-from mpc_controller.leg_kinematics import HIP, HIP_Y, Q_NOM, SIDE, contact_jacobian, ik_clamped
+from mpc_controller.leg_kinematics import HIP, HIP_Y, Q_NOM, R_MAX, SIDE, contact_jacobian, ik_clamped, reach
 from mpc_controller.legged_model import JOINTS, LEGS, contact_ros_topic, ros_force_topic
 from mpc_controller.srb_mpc import G, Q_DEFAULT, SrbMpc, reference, state
 
@@ -51,7 +51,7 @@ def td_summary(td: list) -> str:
     return f"{np.median(a):.0f}/{np.percentile(a, 10):.0f}/{np.percentile(a, 90):.0f}/{len(a)}"
 
 
-def swing_targets(gait: Gait, est, R, v_ref_G, w_cmd, p, foot_r, lift, k_r, step_max, q_prev, contact):
+def swing_targets(gait: Gait, est, R, v_ref_G, w_cmd, p, foot_r, lift, k_r, step_max, q_prev, contact, r_max: float = R_MAX):
     """스윙 발의 관절 목표 (12,)와 착지점 (4,3)·IK 실패 수·클램프 수·마지막 실패 상세(dict, 없으면 None). 지지 발은 q_prev 유지, 착지점은 메모리 값.
 
     contact: 운동학 조기 착지가 반영된 접촉 마스크 — 접촉 발은 지지로 취급(q_prev 유지).
@@ -66,7 +66,7 @@ def swing_targets(gait: Gait, est, R, v_ref_G, w_cmd, p, foot_r, lift, k_r, step
         p_land[i] = raibert(hip_G, p.mean(axis=0), est.n, est.v, v_ref_G, w_cmd, gait.t_remaining(i), gait.t_stance, k_r, step_max)
         foot_G = swing_foot(p[i], p_land[i], s, lift, est.n)
         center_B = R.T @ (foot_G + foot_r * est.n)
-        q_i, clamped = ik_clamped(leg, center_B)
+        q_i, clamped = ik_clamped(leg, center_B, r_max)
         if q_i is None:
             fails += 1
             detail = {
@@ -118,6 +118,9 @@ class WalkNode(Node):
                 ("touch_h", 0.008),
                 ("contact_source", "kinematic"),  # sensor: 조기 착지를 gz 발 contact 센서로 판정(walk.launch 기본). 노드 단독 기본은 센서 없어도 되는 kinematic
                 ("contact_hold", 0.01),
+                # 스윙 목표 무릎 최소 굽힘 rad: 늦은 발이 '1 cm 누르기'를 도달 한계까지 따라가 펴진 채 착지하면 무릎 토크 없이 하중을 받쳐
+                # 몸체가 3.6 cm 높게 고착, MPC Σf_z ≈ mg/2(센서 판정 실측). 정상 높이에선 스윙 목표가 −0.90까지라 0.7은 평상시 무영향
+                ("swing_knee_min", 0.7),
                 ("dump_dir", "/tmp"),
             ],
         )
@@ -303,7 +306,8 @@ class WalkNode(Node):
                 v_ref = self.p["v_gain"] * self.v_cmd
                 v_ref_G = v_ref * est.R_des[:, 0]
                 self.q_sw, p_land, fails, clamps, detail = swing_targets(
-                    self.gait, est, R, v_ref_G, self.w_cmd, p_mem, self.p["foot_r"], self.p["lift"], self.p["k_raibert"], self.p["step_max"], self.q_sw, contact
+                    self.gait, est, R, v_ref_G, self.w_cmd, p_mem, self.p["foot_r"], self.p["lift"], self.p["k_raibert"], self.p["step_max"], self.q_sw, contact,
+                    r_max=reach(self.p["swing_knee_min"]),
                 )
                 if fails:
                     self.get_logger().warning(f"IK 실패: {detail}", throttle_duration_sec=0.5)

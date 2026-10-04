@@ -84,10 +84,16 @@ def ik(leg: str, p_B) -> tuple | None:
 R_MAX, R_MIN = L1 + L2 - 1e-3, math.sqrt(L1 * L1 + L2 * L2 + 2 * L1 * L2 * math.cos(LIMITS[2][0])) + 1e-3  # 축-발 도달 범위(calf 한계 기준)
 
 
-def ik_clamped(leg: str, p_B) -> tuple:
-    """ik와 같되 thigh 축 기준 (x, d) 거리를 [R_MIN, R_MAX]로 클램프한 뒤 푼다(gait_node.ik 방식). 반환 (q | None, clamped: bool).
+def reach(knee: float) -> float:
+    """무릎(calf) 굽힘 |q2| rad → thigh 축–구 중심 거리. reach(0) = L1 + L2(완전히 편 다리)."""
+    return math.sqrt(L1 * L1 + L2 * L2 + 2 * L1 * L2 * math.cos(knee))
+
+
+def ik_clamped(leg: str, p_B, r_max: float = R_MAX) -> tuple:
+    """ik와 같되 thigh 축 기준 (x, d) 거리를 [R_MIN, r_max]로 클램프한 뒤 푼다(gait_node.ik 방식). 반환 (q | None, clamped: bool).
 
     스윙 목표가 침하·보폭 때문에 도달 밖으로 살짝 나가는 경우 hold로 가지 않고 가장 가까운 자세를 쓴다.
+    r_max < R_MAX면 다리를 끝까지 펴지 않는다(펴진 다리는 무릎 토크 없이 하중을 받쳐 힘 제어가 안 먹힘).
     """
     dx, dy, dz = np.asarray(p_B, dtype=float) - (HIP[leg][0], HIP[leg][1], 0.0)
     ly = SIDE[leg] * HIP_Y
@@ -97,7 +103,7 @@ def ik_clamped(leg: str, p_B) -> tuple:
     lz = -math.sqrt(rho2)
     x, d = dx, HIP_Z - lz
     r = math.hypot(x, d)
-    rc = min(R_MAX, max(R_MIN, r))
+    rc = min(r_max, max(R_MIN, r))
     if abs(rc - r) < 1e-12:
         return ik(leg, p_B), False
     x, d = x * rc / r, d * rc / r

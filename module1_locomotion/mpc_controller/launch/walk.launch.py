@@ -46,6 +46,7 @@ def _launch_setup(context, *args, **kwargs):
         "v_gain": float(cfg("v_gain")),
         "touch_h": float(cfg("touch_h")),
         "contact_source": cfg("contact_source"),
+        "swing_knee_min": float(cfg("swing_knee_min")),
     }
     def parse_q_weights(name):
         w = [float(v) for v in cfg(name).split(",")]
@@ -90,6 +91,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("touch_h", default_value="0.008", description="조기 착지 판정 높이 m(스윙 후반 발이 평면 위 이 높이 미만이면 지지로)"),
             DeclareLaunchArgument("contact_source", default_value="sensor", description="조기 착지 판정: sensor(gz 발 contact 센서, 센서 자동 추가) | kinematic(발 높이 < touch_h — 추정 튐에 속아 가짜 착지)"),
             DeclareLaunchArgument("contact_sensors", default_value="false", description="발 contact 센서만 추가(계측: status td_ms 착지 지연·scuff), 판정은 contact_source"),
+            DeclareLaunchArgument("swing_knee_min", default_value="0.7", description="스윙 목표 무릎 최소 굽힘 rad(펴진 다리 착지 방지, 0이면 완전히 펼 수 있음)"),
             DeclareLaunchArgument("q_weights", default_value="", description="13개 쉼표 구분(rpy3 p3 ω3 v3 g), 비우면 기본"),
             DeclareLaunchArgument("q_weights_walk", default_value="", description="보행 중(gait 활성) Q, 13개 쉼표 구분, 비우면 기본"),
             DeclareLaunchArgument("alpha", default_value="", description="비우면 기본"),

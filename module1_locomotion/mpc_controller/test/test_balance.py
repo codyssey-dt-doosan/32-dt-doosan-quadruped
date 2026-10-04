@@ -243,3 +243,18 @@ def test_touchdown_delay_sign_and_scuff():
     assert td_summary([]) == "-"
     assert td_summary([0.02, 0.023, 0.026]).endswith("/3") and td_summary([0.02, 0.023, 0.026]).startswith("23/")
 
+
+
+def test_ik_clamped_respects_knee_margin():
+    """r_max = reach(knee)면 도달 밖 목표에서 calf가 −knee로 멈춤(완전히 펴지지 않음). 안쪽 목표는 그대로."""
+    from mpc_controller.leg_kinematics import HIP, HIP_Y, L1, L2, SIDE, ik_clamped, reach
+
+    assert reach(0.0) == pytest.approx(L1 + L2)
+    far = [HIP["FL"][0], HIP["FL"][1] + SIDE["FL"] * HIP_Y, -0.45]  # 다리 길이 밖, 바로 아래
+    q_full, c_full = ik_clamped("FL", far)
+    q_marg, c_marg = ik_clamped("FL", far, reach(0.7))
+    assert c_full and c_marg
+    assert q_full[2] > -0.2  # 기본 상한: 거의 다 펴짐
+    assert q_marg[2] == pytest.approx(-0.7, abs=1e-6)
+    near = [HIP["FL"][0], HIP["FL"][1] + SIDE["FL"] * HIP_Y, -0.30]
+    assert ik_clamped("FL", near, reach(0.7)) == ik_clamped("FL", near)
