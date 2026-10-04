@@ -210,6 +210,7 @@ def main() -> int:
     ap.add_argument("--world", default="corridor")
     ap.add_argument("--log", required=True)
     ap.add_argument("--after", type=float, default=2.0)
+    ap.add_argument("--rtf", type=float, default=1.0, help="walk.launch real_time_factor와 같게 — 벽시계 기준 발행·캡처 시간을 1/rtf로 늘림")
     ap.add_argument("--cmd", nargs="+", type=float, metavar="V W [S]")
     ap.add_argument("--record", nargs=2, metavar=("F", "S"))
     ap.add_argument("--replay", metavar="F")
@@ -233,13 +234,13 @@ def main() -> int:
         dur = a.cmd[2] if len(a.cmd) > 2 else 15.0
         if v < 0 and -v * dur > 2.0:
             print(f"경고: 후진 {-v * dur:.1f} m — corridor 스폰에서 서쪽 벽까지 약 2.2 m라 벽에 닿는다(후진은 8 s 권장)")
-        threading.Thread(target=_publish, args=(v, w, dur + 1.0), daemon=True).start()
+        threading.Thread(target=_publish, args=(v, w, (dur + 1.0) / a.rtf), daemon=True).start()
     elif a.replay:
         dur = (a.replay_window[1] if a.replay_window else float(list(csv.reader(open(replay_path)))[-1][0])) + 2.0
         threading.Thread(target=_replay, args=(replay_path, start_sim), daemon=True).start()
     else:
         dur = 15.0
-    rows = parse_rows(tm.capture(a.world, dur))
+    rows = parse_rows(tm.capture(a.world, dur / a.rtf))
     if len(rows) < 10:
         print(f"포즈 {len(rows)}건 — 시뮬·GZ_IP 확인")
         return 1

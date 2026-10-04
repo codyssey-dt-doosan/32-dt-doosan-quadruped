@@ -151,14 +151,24 @@ def _static_box(name: str, pose: tuple, pitch: float, size: tuple) -> ET.Element
     )
 
 
-def make_legged_world(world_text: str, *, wrench: bool = False, ramp_deg: float = 0.0, slope_deg: float = 0.0, slope_len: float = 3.0, contact: bool = False) -> str:
-    """월드의 model://go2 include를 model://go2_legged로. include 이름(go2)은 유지 → 토픽명 불변."""
+def make_legged_world(
+    world_text: str, *, wrench: bool = False, ramp_deg: float = 0.0, slope_deg: float = 0.0, slope_len: float = 3.0,
+    contact: bool = False, real_time_factor: float = 1.0,
+) -> str:
+    """월드의 model://go2 include를 model://go2_legged로. include 이름(go2)은 유지 → 토픽명 불변.
+
+    real_time_factor < 1이면 시뮬을 실시간보다 느리게 — 노드(Python, MPC+1 kHz 토크 루프 한 스레드)가 부하로 늦어도
+    sim 시간 기준으로는 제때 돌게 해 실측이 머신 부하에 덜 흔들린다(1이면 원본 그대로)."""
     root = ET.fromstring(world_text)
     uris = [u for u in root.iter("uri") if (u.text or "").strip() == "model://go2"]
     _expect("model://go2 include 수", 1, len(uris))
     uris[0].text = "model://go2_legged"
 
     world = root.find("world")
+    if real_time_factor != 1.0:
+        rtf = world.find("physics/real_time_factor")
+        _expect("physics real_time_factor 수", True, rtf is not None)
+        rtf.text = str(real_time_factor)
     if wrench:
         ET.SubElement(world, "plugin", filename=WRENCH_SYS, name="gz::sim::systems::ApplyLinkWrench")
     if contact:
@@ -239,6 +249,7 @@ def write_legged_assets(
     slope_deg: float = 0.0,
     slope_len: float = 3.0,
     contact: bool = False,
+    real_time_factor: float = 1.0,
 ) -> tuple:
     """변환한 모델·월드·브리지 yaml을 임시 dir에 쓰고 (world_file, bridge_yaml, models_dir)를 돌려준다.
 
@@ -253,7 +264,9 @@ def write_legged_assets(
     model_sdf = make_legged_model(
         read("models", "go2", "model.sdf"), mu, p_gain, d_gain, force_ctrl=force_ctrl, foot_r=foot_r, damping=damping, contact=contact
     )
-    world_sdf = make_legged_world(read("worlds", f"{world}.sdf"), wrench=wrench, ramp_deg=ramp_deg, slope_deg=slope_deg, slope_len=slope_len, contact=contact)
+    world_sdf = make_legged_world(read("worlds", f"{world}.sdf"), wrench=wrench, ramp_deg=ramp_deg, slope_deg=slope_deg, slope_len=slope_len, contact=contact,
+        real_time_factor=real_time_factor,
+    )
     # ponytail: 실행마다 임시 dir 하나가 남는다(수십 KB). 거슬리면 런치 종료 핸들러에서 삭제
     out = tempfile.mkdtemp(prefix="go2_legged_")
     models_dir = os.path.join(out, "models")

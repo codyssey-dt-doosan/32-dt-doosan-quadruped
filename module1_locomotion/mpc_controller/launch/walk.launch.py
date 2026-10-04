@@ -22,6 +22,7 @@ def _launch_setup(context, *args, **kwargs):
         sim_share, world, float(cfg("mu")), 0.0, 0.0, force_ctrl=True, foot_r=0.02, wrench=True,
         ramp_deg=float(cfg("ramp_deg")), damping=0.0, slope_deg=float(cfg("slope_deg")), slope_len=float(cfg("slope_len")),
         contact=cfg("contact_sensors") == "true" or cfg("contact_source") == "sensor",
+        real_time_factor=float(cfg("real_time_factor")),
     )
     split_gui = gui and sys.platform == "darwin"
     gz_args = f"{world_file}" if gui and not split_gui else f"-s {world_file}"  # -r 없음: 일시정지 시작
@@ -92,6 +93,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("contact_source", default_value="sensor", description="조기 착지 판정: sensor(gz 발 contact 센서, 센서 자동 추가) | kinematic(발 높이 < touch_h — 추정 튐에 속아 가짜 착지)"),
             DeclareLaunchArgument("contact_sensors", default_value="false", description="발 contact 센서만 추가(계측: status td_ms 착지 지연·scuff), 판정은 contact_source"),
             DeclareLaunchArgument("swing_knee_min", default_value="0.7", description="스윙 목표 무릎 최소 굽힘 rad(펴진 다리 착지 방지, 0이면 완전히 펼 수 있음)"),
+            DeclareLaunchArgument("real_time_factor", default_value="1.0", description="시뮬 실시간 비율(<1이면 느리게 — 머신 부하에 덜 흔들리는 실측용, walk_metrics --rtf 같이)"),
             DeclareLaunchArgument("q_weights", default_value="", description="13개 쉼표 구분(rpy3 p3 ω3 v3 g), 비우면 기본"),
             DeclareLaunchArgument("q_weights_walk", default_value="", description="보행 중(gait 활성) Q, 13개 쉼표 구분, 비우면 기본"),
             DeclareLaunchArgument("alpha", default_value="", description="비우면 기본"),

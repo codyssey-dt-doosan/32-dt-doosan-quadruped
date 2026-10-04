@@ -326,3 +326,10 @@ def test_contact_option_adds_foot_sensors_world_system_and_bridge():
     assert contact_gz_topic("corridor", "FL") == "/world/corridor/model/go2/link/FL_calf/sensor/FL_foot_contact/contact"
     assert contact_ros_topic("FL") == "/legged_contact/FL"
     assert bridge_entries() == bridge_entries(contact_world=None)
+
+
+def test_world_real_time_factor_option():
+    """real_time_factor < 1이면 physics 목표 RTF를 바꾸고, 기본 1.0은 출력 불변."""
+    world = ET.fromstring(make_legged_world(CORRIDOR, real_time_factor=0.5)).find("world")
+    assert world.find("physics/real_time_factor").text == "0.5"
+    assert make_legged_world(CORRIDOR, real_time_factor=1.0) == make_legged_world(CORRIDOR)

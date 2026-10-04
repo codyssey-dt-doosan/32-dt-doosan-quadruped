@@ -123,7 +123,7 @@ ros2 launch mpc_controller legged.launch.py slope_deg:=15     # 대조군: 개�
 
 - 구조: `srb_mpc.py`(SRB 동역학·이산화·condensing·QP) · `gait.py`(위상·스케줄·Raibert 착지·스윙 궤적) · `body_estimate.FootMemory`(trot 2발 접촉에서도 최근 착지점 4개로 지형 평면) · `walk_node.py`(200 Hz 추정·50 Hz MPC·1 kHz 관절 토크). 지지 발 τ = −Jᵀf(접촉 자코비안), 스윙 발은 IK + 관절 PD.
 - 모드: `standup`(0~2 s PD 램프) → `blend` → `stand`(MPC, 4발) → `walk`(명령 있을 때 gait 활성, 끊기면 정지 전이) → `hold`(QP 실패 50 ms·기울기 45°·IMU/관절 0.1 s·IK 실패 20틱, 래치).
-- 런치 인자: `world` · `gui` · `mu` 0.8 · `slope_deg`·`slope_len` 3.0 · `ramp_deg` · 튜닝용 `stride_hz` 3.0 · `lift` 0.025 · `k_raibert` 0.03 · `v_gain` 1.12 · `q_weights`·`q_weights_walk`(13개 쉼표) · `alpha` · `height`·`height_walk` · `contact_source` sensor(기본)|kinematic · `contact_sensors`(kinematic 판정에서 센서만 붙여 계측) · `touch_h` 0.008(kinematic 판정 높이) · `swing_knee_min` 0.7(스윙 목표 무릎 최소 굽힘 rad).
+- 런치 인자: `world` · `gui` · `mu` 0.8 · `slope_deg`·`slope_len` 3.0 · `ramp_deg` · 튜닝용 `stride_hz` 3.0 · `lift` 0.025 · `k_raibert` 0.03 · `v_gain` 1.12 · `q_weights`·`q_weights_walk`(13개 쉼표) · `alpha` · `height`·`height_walk` · `contact_source` sensor(기본)|kinematic · `contact_sensors`(kinematic 판정에서 센서만 붙여 계측) · `touch_h` 0.008(kinematic 판정 높이) · `swing_knee_min` 0.7(스윙 목표 무릎 최소 굽힘 rad) · `real_time_factor` 1.0(<1이면 시뮬을 느리게 — 실측용, `walk_metrics --rtf`를 같은 값으로).
 - 실측 확정 튜닝(스펙 기본값에서 바뀐 것): `height`·`height_walk` 0.30(0.32는 서 있으면 다리 도달 93%라 좌굴하고, 보행 중엔 몸체가 7 mm 더 떠 착지가 17 ms 늦음) · `lift` 0.025 · `step_max` 0.08 · `v_gain` 1.12(MPC 추종이 89%로 일관) · Q 정지 p_xy 20·v_xy 0.5(밀기 반응), 보행 v_xy 8·p_z 50 · 속도 추정 = `/odom` twist(v_z는 정지 시 다리 오도메트리 저역통과, 보행 시 0) · 지형 법선 저역통과 0.3 s · 스윙은 s 0.85에 착지 후 1 cm 밀기 · 조기 착지만 판정(기본은 발 contact 센서 — 운동학 판정은 발 높이 추정이 10 ms에 4 cm 튀는 것에 속아 공중 발에 힘을 줌) · MPC k=0 접촉 = 실제, 접촉 변화 시 즉시 MPC.
 
 실측(corridor 헤드리스, `log/walk_run.sh <태그> walk_metrics.py <인자> -- [런치 인자]`, 로컬 스크립트):
@@ -144,7 +144,7 @@ ros2 launch mpc_controller legged.launch.py slope_deg:=15     # 대조군: 개�
 2. **보행 전도율**: 2026-10-01 원인 규명 — 보행 높이 0.32에서 착지가 스케줄보다 17 ms 늦고(발 contact 센서 실측, status `td_ms`), 운동학 조기 착지 판정이 공중 발(0~8 mm)이나 발 높이 추정 튐을 착지로 받아 힘을 배정. 높이 0.30 + 센서 판정으로 재생 10/10 무전도(이전 기본 구성 3/7·1/5 전도). 머신 부하(MPC p99 >5 ms)에선 여전히 전도 가능.
 3. **기동 레이스**: 드물게 기동 직후 `qp 0·active 0`으로 hold(재기동하면 정상).
 5. (해소, 2026-10-04) **센서 판정의 펴진 다리 고착** — 늦은 발이 '1 cm 누르기' 목표를 도달 한계까지 따라가 다리가 펴진 채 착지, 몸체가 3.6 cm 높게 고착되고 MPC Σf_z ≈ mg/2였음. 스윙 목표 무릎 최소 굽힘 `swing_knee_min` 0.7 rad(정상 높이에선 스윙 목표가 −0.90까지라 무영향)로 몸체 0.378 → 0.360, Σf_z 65 → 96 N, 착지 지연 16 → 3 ms. 아직 목표보다 1.8 cm 높고 Σf_z < mg — 남은 받침 하중은 미해결.
-6. **스윙 정점 발 튐**: 스윙 s 0.5~0.7에서 두 스윙 발이 8~10 ms 사이 ±2 cm 오르내리다 조기 접지 → 지지력 급변 → 전도(재생 5회 중 1회, 부하 평균 4.9 무렵). 추정 오류가 아니라 실제 접촉(센서 확인). 스윙 관절 PD 루프 지연과 부하 민감도 의심 — 덤프에 관절 목표·수신 간격이 없어 미확인.
+6. **스윙 발 튐**(2026-10-04 원인 규명): 목표 변화 없이 스윙 발이 5 ms에 7~9 mm 오르내림 = 스윙 관절 PD 진동(PD 요구 토크 100+ N·m). ① `/joint_states` 구독 깊이 10이라 MPC 풀이 동안 쌓인 메시지를 하나씩 처리해 낡은 상태(4~6 ms)로 PD → 깊이 1로 해소(관절 지연 p99 3 → 1 ms). ② 부하 시 MPC와 1 kHz 토크 루프가 Python 한 스레드에서 같이 굶어 토크 갱신이 수십 ms 끊김(바쁜 루프 3개: 콜백 간격 p90 17.6 ms·최대 41 ms, 재생 3/3 전도). **실측은 `real_time_factor:=0.5`로**: 같은 부하에서 3/3 무전도·튐 0~5회. 무부하에서도 가끔 노드가 수십 ms 멈춰(콜백 간격 최대 82 ms 벽시계) 비틀거림(재생 1/3). 근본 대응은 토크 루프 분리(별도 스레드·프로세스) — ⑤/실기 이식 때.
 4. (해소) "후진 회귀"는 측정 조건 탓 — 15 s 후진은 스폰에서 서쪽 벽(약 2.2 m)에 닿는다. 8 s로 재면 −0.206·−0.208(2026-10-01, 센서 판정·높이 0.30).
 
 **함정:** 맥이 잠들면 IMU가 끊겨 hold → 배치는 깨어 있을 때만. GUI 카메라는 `gz service -s /gui/move_to --reqtype gz.msgs.StringMsg --reptype gz.msgs.Boolean --req 'data: "go2"'` 반복만 로봇을 잡는다(follow는 벽).
