@@ -231,6 +231,8 @@ def main() -> int:
     if a.cmd:
         v, w = a.cmd[0], a.cmd[1]
         dur = a.cmd[2] if len(a.cmd) > 2 else 15.0
+        if v < 0 and -v * dur > 2.0:
+            print(f"경고: 후진 {-v * dur:.1f} m — corridor 스폰에서 서쪽 벽까지 약 2.2 m라 벽에 닿는다(후진은 8 s 권장)")
         threading.Thread(target=_publish, args=(v, w, dur + 1.0), daemon=True).start()
     elif a.replay:
         dur = (a.replay_window[1] if a.replay_window else float(list(csv.reader(open(replay_path)))[-1][0])) + 2.0
