@@ -69,9 +69,9 @@ def log_stats(path: str) -> dict:
     if lines:
         m = re.search(r"ik_fail=(\d+) ik_clamp=(\d+) phase=([\d.]+) active=(\d)", lines[-1])
         st.update({"ik_fail": int(m.group(1)), "ik_clamp": int(m.group(2)), "active": int(m.group(4))})
-        t = re.search(r"td_ms=(\S+) scuff=(\d+)", lines[-1])
+        t = re.search(r"td_ms=(\S+) scuff=(\d+) hjump=(\d+)", lines[-1])
         if t:
-            st.update({"td_ms": t.group(1), "scuff": int(t.group(2))})
+            st.update({"td_ms": t.group(1), "scuff": int(t.group(2)), "hjump": int(t.group(3))})
     return st
 
 

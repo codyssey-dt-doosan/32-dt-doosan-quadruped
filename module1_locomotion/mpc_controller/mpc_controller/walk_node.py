@@ -7,6 +7,7 @@
 import csv
 import math
 import threading
+import time
 from collections import deque
 
 import numpy as np
@@ -22,7 +23,7 @@ from std_msgs.msg import Float64
 from mpc_controller.balance_node import STANDUP_S, TAU_MAX, blend, gains, gz_unpause, joint_torque, q_startup, supervise
 from mpc_controller.body_estimate import FootMemory, com_target, estimate, terrain_frame, yaw_aligned
 from mpc_controller.gait import Gait, raibert, swing_foot, swing_s
-from mpc_controller.leg_kinematics import HIP, HIP_Y, Q_NOM, R_MAX, SIDE, contact_jacobian, ik_clamped, reach
+from mpc_controller.leg_kinematics import HIP, HIP_Y, Q_NOM, R_MAX, SIDE, contact_jacobian, foot_pos, ik_clamped, reach
 from mpc_controller.legged_model import JOINTS, LEGS, contact_ros_topic, ros_force_topic
 from mpc_controller.srb_mpc import G, Q_DEFAULT, SrbMpc, reference, state
 
@@ -146,11 +147,16 @@ class WalkNode(Node):
         self.tilt_deg = 0.0
         self.mode = "run"
         self.imu_count = 0
-        self.stats = {"qp_ms": [], "fail": 0, "sat": 0, "sum_fz": 0.0, "ik_fail": 0, "ik_clamp": 0, "v_est_max": 0.0, "plane_reset": 0, "early": 0, "mpc_extra": 0, "scuff": 0}
+        self.stats = {"qp_ms": [], "fail": 0, "sat": 0, "sum_fz": 0.0, "ik_fail": 0, "ik_clamp": 0, "v_est_max": 0.0, "plane_reset": 0, "early": 0, "mpc_extra": 0, "scuff": 0, "hjump": 0}
+        # 스윙 발 튐 진단: IMU 틱 사이 관절 콜백의 최대 지연(sim)·간격(벽시계)·스윙 토크, 직전 틱 발 높이·목표 높이
+        self.jlat_max = self.jgap_max = self.tau_sw_max = 0.0
+        self.j_wall = None
+        self.jlat_all = []  # status 주기마다 비움
+        self.h_prev = self.h_tgt_prev = None
         self.td = []  # 센서 착지 지연 s(계측 전용 — walk.launch contact_sensors:=true)
         self.prev_touch = np.zeros(4, bool)
         self.pubs = [self.create_publisher(Float64, ros_force_topic(j), 10) for j in JOINTS]
-        self.create_subscription(JointState, "/joint_states", self._joint_cb, 10)
+        self.create_subscription(JointState, "/joint_states", self._joint_cb, 1)  # 최신만: 깊이 10이면 MPC 풀이 동안 쌓인 1 kHz 메시지를 하나씩 처리해 스윙 PD가 최대 10 ms 낡은 상태로 돌고 진동(hjump 실측)
         self.create_subscription(Imu, "/imu", self._imu_cb, 10)
         self.create_subscription(Twist, "/cmd_vel", self._cmd_cb, 10)
         self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
@@ -195,6 +201,13 @@ class WalkNode(Node):
         self.qd = np.array([vel.get(j, 0.0) for j in JOINTS])
         now = self._now()
         self.joint_stamp = now
+        wall = time.monotonic()
+        if self.j_wall is not None:
+            self.jgap_max = max(self.jgap_max, wall - self.j_wall)
+        self.j_wall = wall
+        lat = now - (msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
+        self.jlat_max = max(self.jlat_max, lat)
+        self.jlat_all.append(lat)
         if self.t0 is None:
             self.t0 = now
         t = now - self.t0
@@ -211,6 +224,7 @@ class WalkNode(Node):
                     tau[s] = self.tau_ff[s] - self.p["kd_stance"] * self.qd[s]
                 else:
                     tau[s] = self.p["kp_swing"] * (self.q_sw[s] - self.q[s]) - self.p["kd_swing"] * self.qd[s]
+                    self.tau_sw_max = max(self.tau_sw_max, float(np.abs(tau[s]).max()))
             tau = np.clip(tau, -TAU_MAX, TAU_MAX)
         self.stats["sat"] += int(np.any(np.abs(tau) >= TAU_MAX))
         for pub, u in zip(self.pubs, tau):
@@ -290,6 +304,21 @@ class WalkNode(Node):
                         if not contact[i] and s is not None and s > 0.5 and (touching[i] if sensor else h[i] < self.p["touch_h"]):
                             contact[i] = True  # 조기 착지: 스윙 PD가 지면을 밀지 않게 즉시 지지로
                             self.stats["early"] += 1
+                # 스윙 발 튐 진단: 현재 관절 목표 q_sw의 발 높이(평면 기준)·추종 오차, 한 틱(5 ms) 6 mm 넘는 높이 변화는 이벤트로 기록(정상 스윙 ≈1.8 mm)
+                o_d = self.memory.p.mean(axis=0) if self.memory.p is not None else np.zeros(3)
+                h_tgt = np.array([(R @ foot_pos(leg, self.q_sw[3 * i : 3 * i + 3]) - self.p["foot_r"] * est.n - o_d) @ est.n for i, leg in enumerate(LEGS)])
+                swing = ~contact if self.gait.active else np.zeros(4, bool)
+                qerr = float(max((np.abs(self.q_sw[3 * i : 3 * i + 3] - self.q[3 * i : 3 * i + 3]).max() for i in np.flatnonzero(swing)), default=0.0))
+                diag = (round(self.jlat_max * 1000, 1), round(self.jgap_max * 1000, 1), round(self.tau_sw_max, 1), round(qerr, 3))
+                if self.h_prev is not None:
+                    for i in np.flatnonzero(swing & (np.abs(h - self.h_prev) > 0.006)):
+                        self.stats["hjump"] += 1
+                        self.get_logger().warning(
+                            f"hjump {LEGS[i]} s={swing_s(self.gait.leg_phase(i), self.gait.duty) or -1:.2f} dh={(h[i] - self.h_prev[i]) * 1000:+.0f}mm "
+                            f"dh_tgt={(h_tgt[i] - self.h_tgt_prev[i]) * 1000:+.0f}mm qerr={qerr:.3f} jlat={diag[0]}ms jgap={diag[1]}ms tau_sw={diag[2]}"
+                        )
+                self.h_prev, self.h_tgt_prev = h.copy(), h_tgt
+                self.jlat_max = self.jgap_max = self.tau_sw_max = 0.0
                 # 진단 덤프용 프레임 기록(hold 진입 시에만 파일로 씀) — est·contact·h 확정 직후
                 self.dbg.append((
                     now - self.t0, self.gait.phase, int(self.gait.active), *contact.astype(int), *self.gait.contact().astype(int),
@@ -297,6 +326,7 @@ class WalkNode(Node):
                     *[(-1.0 if (s := swing_s(self.gait.leg_phase(i), self.gait.duty)) is None else round(s, 3)) for i in range(4)],
                     round(self.tilt_deg, 2), round(float(self.stats["sum_fz"]), 1), *np.round(est.v[:2], 3),
                     round(float(np.abs(self.tau_ff).max()), 2), *np.round(est.n, 3),
+                    *np.round(h_tgt, 4), *diag,
                 ))
                 # 발 메모리 입력 클립: 스케줄 접촉 발이 실제론 공중일 때 다리 오도메트리 v_est가 튀어 메모리를 오염시킴(실측)
                 v_clip = np.clip(est.v, -(self.p["v_max"] + 0.3), self.p["v_max"] + 0.3)
@@ -384,7 +414,8 @@ class WalkNode(Node):
                 w.writerow(
                     ["t", "phase", "active", "c_FL", "c_FR", "c_RL", "c_RR", "s_FL", "s_FR", "s_RL", "s_RR",
                      "h_FL", "h_FR", "h_RL", "h_RR", "sw_FL", "sw_FR", "sw_RL", "sw_RR", "tilt", "sum_fz",
-                     "vx", "vy", "tau_max", "nx", "ny", "nz"]
+                     "vx", "vy", "tau_max", "nx", "ny", "nz",
+                     "ht_FL", "ht_FR", "ht_RL", "ht_RR", "jlat_ms", "jgap_ms", "tau_sw", "qerr"]
                 )
                 w.writerows(self.dbg)
             self.get_logger().warning(f"덤프: {path}")
@@ -399,9 +430,11 @@ class WalkNode(Node):
             f"v_cmd={self.v_cmd:.2f} w_cmd={self.w_cmd:.2f} v_est_max={self.stats['v_est_max']:.2f} plane_reset={self.stats['plane_reset']} "
             f"early={self.stats['early']} mpc_extra={self.stats['mpc_extra']} "
             f"touch={''.join(str(int(b)) for b in sensor_touching(self.touch_stamp, self._now(), 1.0))} "
-            f"td_ms={td_summary(self.td)} scuff={self.stats['scuff']}"
+            f"td_ms={td_summary(self.td)} scuff={self.stats['scuff']} hjump={self.stats['hjump']} "
+            f"jlat_ms={np.median(self.jlat_all or [0]) * 1000:.1f}/{np.percentile(self.jlat_all or [0], 99) * 1000:.1f}"
         )
         self.stats["v_est_max"] = 0.0
+        self.jlat_all = []
 
 
 def main(args=None) -> None:
