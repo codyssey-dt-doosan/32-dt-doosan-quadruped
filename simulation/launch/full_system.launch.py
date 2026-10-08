@@ -27,6 +27,8 @@ def _launch_setup(context, *args, **kwargs):
     map_size = LaunchConfiguration("map_size").perform(context)
     leg_animation = LaunchConfiguration("leg_animation").perform(context)
     locomotion = LaunchConfiguration("locomotion").perform(context)
+    inspection = LaunchConfiguration("inspection").perform(context).lower() == "true"
+    gas_safety = LaunchConfiguration("gas_safety").perform(context).lower() == "true"
 
     sim_share = get_package_share_directory("simulation")
     world_file = os.path.join(sim_share, "worlds", f"{world}.sdf")
@@ -87,6 +89,20 @@ def _launch_setup(context, *args, **kwargs):
         output="screen",
     )
 
+    modules = [
+        ("elevation_map", "elevation_map.launch.py"),
+        ("mpc_controller", "mpc_controller.launch.py"),
+        ("fall_recovery", "fall_recovery.launch.py"),
+        ("patrol_path", "patrol_path.launch.py"),
+    ]
+    if inspection:
+        modules += [("gauge_ocr", "gauge_ocr.launch.py"), ("thermal_fusion", "thermal_fusion.launch.py")]
+    if gas_safety:
+        modules += [
+            ("plume_sim", "plume_sim.launch.py"),
+            ("source_seeking", "source_seeking.launch.py"),
+            ("return_to_home", "return_to_home.launch.py"),
+        ]
     module_launches = [
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -101,17 +117,7 @@ def _launch_setup(context, *args, **kwargs):
                 "locomotion": locomotion,
             }.items(),
         )
-        for pkg, launch_file in (
-            ("elevation_map", "elevation_map.launch.py"),
-            ("mpc_controller", "mpc_controller.launch.py"),
-            ("fall_recovery", "fall_recovery.launch.py"),
-            ("gauge_ocr", "gauge_ocr.launch.py"),
-            ("thermal_fusion", "thermal_fusion.launch.py"),
-            ("patrol_path", "patrol_path.launch.py"),
-            ("plume_sim", "plume_sim.launch.py"),
-            ("source_seeking", "source_seeking.launch.py"),
-            ("return_to_home", "return_to_home.launch.py"),
-        )
+        for pkg, launch_file in modules
     ]
 
     return [
@@ -128,6 +134,8 @@ def _launch_setup(context, *args, **kwargs):
 def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
+            DeclareLaunchArgument("inspection", default_value="true", description="OCR·열화상 모듈 실행"),
+            DeclareLaunchArgument("gas_safety", default_value="true", description="가스 탐색·복귀 모듈 실행"),
             DeclareLaunchArgument(
                 "world",
                 default_value="corridor",
