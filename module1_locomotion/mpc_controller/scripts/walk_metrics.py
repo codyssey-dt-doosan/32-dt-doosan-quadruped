@@ -190,10 +190,16 @@ def replay_errors(rows: list, cmd_path: str, t_start: float, win: float = 1 / 3.
 
 
 def slope_segments(rows: list, deg: float, L: float) -> dict:
+    """기준 3·5: 경사로 구간별 속도·기울기·최대 기울기·횡 드리프트.
+
+    y_drift = 코스(x0~x3) 안 진입 y 대비 최대 횡 이탈 (기준 3·5), y_max = 캡처 전체 절대 y (정보).
+    """
     th = math.radians(deg)
     x0 = SPAWN_X + 2.0
     x1, x2, x3 = x0 + L * math.cos(th), x0 + L * math.cos(th) + 2.0, x0 + 2 * L * math.cos(th) + 2.0
     out = {"completed": max(q[0] for q in rows) >= x3 + 0.3, "tilt_max": max(q[3] for q in rows), "y_max": max(abs(q[1]) for q in rows)}
+    course = [q for q in rows if x0 <= q[0] <= x3]
+    out["y_drift"] = max(abs(q[1] - course[0][1]) for q in course) if len(course) >= 2 else None
     for name, lo, hi, exp_pitch in (("up", x0, x1, -deg), ("flat", x1, x2, 0.0), ("down", x2, x3, deg)):
         seg = [q for q in rows if lo + 0.2 <= q[0] < hi - 0.2]
         if len(seg) < 2:
@@ -255,7 +261,7 @@ def main() -> int:
         if a.slope:
             s = slope_segments(rows, *a.slope)
             out += f" slope={s}"
-            ok &= s["completed"] and s["y_max"] < 0.3
+            ok &= s["completed"] and s["y_drift"] is not None and s["y_drift"] < 0.3
             ok &= all(seg is None or abs(seg["pitch_err"]) < 5.0 for seg in (s["up"], s["down"]))
             min_up = 0.15 if a.slope[0] >= 20 else 0.05  # 기준 3은 20°에서만 속도 하한
             ok &= s["up"] is not None and s["up"]["v"] >= min_up

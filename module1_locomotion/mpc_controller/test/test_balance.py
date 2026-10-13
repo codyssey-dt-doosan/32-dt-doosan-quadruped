@@ -241,6 +241,31 @@ def test_window_rows_slices_and_rezeroes():
         assert w == pytest.approx((i + 2) * 0.01)
 
 
+def test_slope_segments_y_drift_only_on_course():
+    """기준 3 횡 드리프트: 코스(x0~x3) 안에서 진입 y 대비로만 잰다 — 코스 뒤 계속 걷다 옆으로 간 것은 제외."""
+    import math
+
+    from walk_metrics import SPAWN_X, slope_segments
+
+    deg, L = 20.0, 3.0
+    x0 = SPAWN_X + 2.0
+    x3 = x0 + 2 * L * math.cos(math.radians(deg)) + 2.0
+    rows = []
+    t = 0.0
+    x = SPAWN_X
+    while x < x3 + 3.0:  # 코스 뒤 3 m 더
+        y = 0.05 + (0.1 if x0 <= x <= x3 else 0.0) * (x - x0) / (x3 - x0)  # 진입 y 0.05, 코스 안 최대 +0.1
+        if x > x3:
+            y = 1.2  # 코스 뒤 크게 옆으로
+        rows.append((x, y, 0.0, 1.0, 0.0, 0.0, 0.0, t))
+        x += 0.01
+        t += 0.033
+    s = slope_segments(rows, deg, L)
+    assert s["y_max"] == pytest.approx(1.2)
+    assert s["y_drift"] == pytest.approx(0.1, abs=2e-3)
+    assert slope_segments(rows[:5], deg, L)["y_drift"] is None  # 코스 도달 전
+
+
 def test_replay_errors_stride_window_ignores_trot_sway_and_accel(tmp_path):
     """기준 2: 3 Hz 전후 흔들림은 보폭 창 평균에서 사라지고, 명령 변화 후 0.5 s 창은 채점 안 함."""
     import math
