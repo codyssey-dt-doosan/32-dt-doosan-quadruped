@@ -122,17 +122,17 @@ def test_swing_targets_reachable_on_slope():
     e = estimate(q12, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
     g = Gait(3.0, 0.5)
     g.tick(0.25, True)  # 위상 0.75 → FL·RR 스윙 중간
-    q_sw, p_land, fails, _, _ = swing_targets(g, e, R, 0.3 * e.R_des[:, 0], 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
+    q_sw, p_land, fails, _, _, _ = swing_targets(g, e, R, 0.3 * e.R_des[:, 0], 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
     assert fails == 0 and not np.allclose(q_sw[:3], q12[:3]) and np.allclose(q_sw[3:6], q12[3:6])
     assert p_land[0][0] > e.p[0][0]  # 전진 → 앞 착지
 
     q12_sunk = np.concatenate([leg_ik(leg, [HIP[leg][0], HIP[leg][1] + SIDE[leg] * HIP_Y, -0.325]) for leg in LEGS])
     e_sunk = estimate(q12_sunk, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
-    _, _, fails_sunk, _, _ = swing_targets(g, e_sunk, R, 0.3 * e_sunk.R_des[:, 0], 0.0, e_sunk.p, 0.02, 0.025, 0.03, 0.08, q12_sunk, g.contact())
+    _, _, fails_sunk, _, _, _ = swing_targets(g, e_sunk, R, 0.3 * e_sunk.R_des[:, 0], 0.0, e_sunk.p, 0.02, 0.025, 0.03, 0.08, q12_sunk, g.contact())
     assert fails_sunk == 0
 
     # 5차 실측 진단: lift 0.15(도달 불가)는 이제 hold 대신 ik_clamped가 흡수 — fails 0·clamps > 0이어야 한다
-    _, _, fails_bad, clamps_bad, _ = swing_targets(g, e, R, 0.3 * e.R_des[:, 0], 0.0, e.p, 0.02, 0.15, 0.03, 0.08, q12, g.contact())
+    _, _, fails_bad, clamps_bad, _, _ = swing_targets(g, e, R, 0.3 * e.R_des[:, 0], 0.0, e.p, 0.02, 0.15, 0.03, 0.08, q12, g.contact())
     assert fails_bad == 0 and clamps_bad > 0
 
 
@@ -151,12 +151,12 @@ def test_swing_targets_reachable_flat_fast():
     e = estimate(q12, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
     g = Gait(3.0, 0.5)
     g.tick(0.25, True)  # 위상 0.75 → FL·RR 스윙 중간
-    _, _, fails, _, _ = swing_targets(g, e, R, 0.5 * e.R_des[:, 0], 1.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
+    _, _, fails, _, _, _ = swing_targets(g, e, R, 0.5 * e.R_des[:, 0], 1.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
     assert fails == 0
 
     q12_sunk = np.concatenate([leg_ik(leg, [HIP[leg][0], HIP[leg][1] + SIDE[leg] * HIP_Y, -0.325]) for leg in LEGS])
     e_sunk = estimate(q12_sunk, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
-    _, _, fails_sunk, _, _ = swing_targets(g, e_sunk, R, 0.5 * e_sunk.R_des[:, 0], 1.0, e_sunk.p, 0.02, 0.025, 0.03, 0.08, q12_sunk, g.contact())
+    _, _, fails_sunk, _, _, _ = swing_targets(g, e_sunk, R, 0.5 * e_sunk.R_des[:, 0], 1.0, e_sunk.p, 0.02, 0.025, 0.03, 0.08, q12_sunk, g.contact())
     assert fails_sunk == 0
 
 
@@ -175,10 +175,57 @@ def test_swing_targets_land_at_neutral_y_when_still():
     e = estimate(q12, zero12, R, np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
     g = Gait(3.0, 0.5)
     g.tick(0.25, True)  # 위상 0.75 → FL·RR 스윙 중간
-    _, p_land, _, _, _ = swing_targets(g, e, R, np.zeros(3), 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
+    _, p_land, _, _, _, _ = swing_targets(g, e, R, np.zeros(3), 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
     assert p_land[0][1] == pytest.approx(0.14, abs=1e-6)
     assert p_land[0][0] == pytest.approx(0.19, abs=1e-6)
     assert p_land[3][1] == pytest.approx(-0.14, abs=1e-6)
+
+
+def _still_setup():
+    from mpc_controller.body_estimate import estimate
+    from mpc_controller.gait import Gait
+    from mpc_controller.leg_kinematics import HIP, HIP_Y, SIDE
+    from mpc_controller.leg_kinematics import ik as leg_ik
+    from mpc_controller.legged_model import LEGS
+
+    q12 = np.concatenate([leg_ik(leg, [HIP[leg][0], HIP[leg][1] + SIDE[leg] * HIP_Y, -0.34]) for leg in LEGS])
+    e = estimate(q12, np.zeros(12), np.eye(3), np.zeros(3), (True,) * 4, 0.02, [0.0, 0.0, -0.04])
+    g = Gait(3.0, 0.5)
+    return q12, e, g
+
+
+def test_swing_targets_uses_history_anchor():
+    """⑤-1: 착지 예정 xy 6 cm 안에 밟은 자리 기록이 있으면 그 높이로, 반경 밖이면 현행(평면 o) 그대로."""
+    from mpc_controller.body_estimate import StepHistory
+    from mpc_controller.walk_node import swing_targets
+
+    q12, e, g = _still_setup()
+    g.tick(0.25, True)  # 위상 0.75 → FL(0)·RR(3) 스윙 중간
+    o = e.p.mean(axis=0)
+    _, base, _, _, _, anc0 = swing_targets(g, e, np.eye(3), np.zeros(3), 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact())
+    assert np.isnan(anc0).all()
+    h = StepHistory()
+    h.push([[0.21, 0.14, o[2] + 0.05]])  # FL 착지점(0.19, 0.14) 2 cm 앞, 5 cm 높음
+    _, p_land, _, _, _, anc = swing_targets(g, e, np.eye(3), np.zeros(3), 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact(), history=h)
+    assert p_land[0][2] == pytest.approx(o[2] + 0.05) and anc[0] == pytest.approx(0.05)
+    assert np.allclose(p_land[3], base[3]) and np.isnan(anc[3])  # RR 근처엔 기록 없음 → 현행
+    assert np.isnan(anc[1]) and np.isnan(anc[2])  # 지지 발
+
+    far = StepHistory()
+    far.push([[0.30, 0.14, o[2] + 0.05]])  # 11 cm 밖
+    _, p_far, _, _, _, anc_far = swing_targets(g, e, np.eye(3), np.zeros(3), 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact(), history=far)
+    assert np.allclose(p_far, base) and np.isnan(anc_far).all()
+
+
+def test_swing_targets_anchor_ignored_when_inactive():
+    from mpc_controller.body_estimate import StepHistory
+    from mpc_controller.walk_node import swing_targets
+
+    q12, e, g = _still_setup()  # tick 안 함 → 비활성(4발 지지)
+    h = StepHistory()
+    h.push([[0.19, 0.14, -0.2]])
+    q_sw, _, _, _, _, anc = swing_targets(g, e, np.eye(3), np.zeros(3), 0.0, e.p, 0.02, 0.025, 0.03, 0.08, q12, g.contact(), history=h)
+    assert np.isnan(anc).all() and np.allclose(q_sw, q12)
 
 
 def test_window_rows_slices_and_rezeroes():

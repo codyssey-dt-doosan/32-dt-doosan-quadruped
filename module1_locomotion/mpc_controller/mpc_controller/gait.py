@@ -70,8 +70,11 @@ class Gait:
         return (prog >= lo) & (prog <= hi)
 
 
-def raibert(hip_G, o_G, n_G, v_est, v_ref, w_ref: float, t_rem: float, t_stance: float, k_r: float, step_max: float) -> np.ndarray:
-    """착지점(G, 몸체 원점 기준): 착지 시각 hip 예측 + v_est·T_st/2 + k_r(v_est − v_ref), 평면(o, n) 투영, hip 반경 클램프."""
+def raibert(hip_G, o_G, n_G, v_est, v_ref, w_ref: float, t_rem: float, t_stance: float, k_r: float, step_max: float, anchor=None) -> np.ndarray:
+    """착지점(G, 몸체 원점 기준): 착지 시각 hip 예측 + v_est·T_st/2 + k_r(v_est − v_ref), 평면 투영, hip 반경 클램프.
+
+    투영 평면은 법선 n이 지나는 점 anchor(밟은 자리 기록, ⑤-1) — 없으면 o(발 기억 4점 평균).
+    """
     hip, o, n = (np.asarray(a, float) for a in (hip_G, o_G, n_G))
     v_est, v_ref = np.asarray(v_est, float), np.asarray(v_ref, float)
     hip_pred = rotz(w_ref * t_rem) @ hip + v_ref * t_rem
@@ -80,7 +83,8 @@ def raibert(hip_G, o_G, n_G, v_est, v_ref, w_ref: float, t_rem: float, t_stance:
     dist = float(np.hypot(*d))
     if dist > step_max:
         p[:2] = hip_pred[:2] + d * (step_max / dist)
-    return p - ((p - o) @ n) * n
+    base = o if anchor is None else np.asarray(anchor, float)
+    return p - ((p - base) @ n) * n
 
 
 def swing_foot(p_lift, p_land, s: float, lift: float, n, land_at: float = 0.85, push: float = 0.01) -> np.ndarray:

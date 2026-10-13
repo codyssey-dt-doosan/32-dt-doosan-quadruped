@@ -52,19 +52,28 @@ def td_summary(td: list) -> str:
     return f"{np.median(a):.0f}/{np.percentile(a, 10):.0f}/{np.percentile(a, 90):.0f}/{len(a)}"
 
 
-def swing_targets(gait: Gait, est, R, v_ref_G, w_cmd, p, foot_r, lift, k_r, step_max, q_prev, contact, r_max: float = R_MAX):
-    """스윙 발의 관절 목표 (12,)와 착지점 (4,3)·IK 실패 수·클램프 수·마지막 실패 상세(dict, 없으면 None). 지지 발은 q_prev 유지, 착지점은 메모리 값.
+def swing_targets(gait: Gait, est, R, v_ref_G, w_cmd, p, foot_r, lift, k_r, step_max, q_prev, contact, r_max: float = R_MAX, history=None, r_anchor: float = 0.06):
+    """스윙 발의 관절 목표 (12,)와 착지점 (4,3)·IK 실패 수·클램프 수·마지막 실패 상세(dict, 없으면 None)·기록 기준점 높이 (4,).
+    지지 발은 q_prev 유지, 착지점은 메모리 값.
 
     contact: 운동학 조기 착지가 반영된 접촉 마스크 — 접촉 발은 지지로 취급(q_prev 유지).
+    history: StepHistory — 착지 xy r_anchor 안에 밟은 자리가 있으면 그 높이 평면에 투영(⑤-1). anc는 그 점의 평면 o 기준
+    높이 (c−o)·n, 기록 미사용·지지 발은 nan.
     """
     q_sw, p_land, fails, clamps, detail = q_prev.copy(), p.copy(), 0, 0, None
-    n_B = R.T @ est.n
+    o = p.mean(axis=0)
+    anc = np.full(4, np.nan)
     for i, leg in enumerate(LEGS):
         s = swing_s(gait.leg_phase(i), gait.duty) if gait.active else None
         if s is None:
             continue
         hip_G = R @ np.array([HIP[leg][0], HIP[leg][1] + SIDE[leg] * HIP_Y, 0.0])  # 착지 기준 = 중립 발 위치(hip 롤 축이 아님 — 축에 두면 4 cm 안쪽 착지로 무릎이 한계까지 굽음, 실측)
-        p_land[i] = raibert(hip_G, p.mean(axis=0), est.n, est.v, v_ref_G, w_cmd, gait.t_remaining(i), gait.t_stance, k_r, step_max)
+        args = (hip_G, o, est.n, est.v, v_ref_G, w_cmd, gait.t_remaining(i), gait.t_stance, k_r, step_max)
+        p_land[i] = raibert(*args)
+        c = history.nearest(p_land[i][:2], r_anchor) if history is not None else None
+        if c is not None:
+            p_land[i] = raibert(*args, anchor=c)
+            anc[i] = (c - o) @ est.n
         foot_G = swing_foot(p[i], p_land[i], s, lift, est.n)
         center_B = R.T @ (foot_G + foot_r * est.n)
         q_i, clamped = ik_clamped(leg, center_B, r_max)
@@ -77,7 +86,7 @@ def swing_targets(gait: Gait, est, R, v_ref_G, w_cmd, p, foot_r, lift, k_r, step
         else:
             q_sw[3 * i : 3 * i + 3] = q_i
             clamps += int(clamped)
-    return q_sw, p_land, fails, clamps, detail
+    return q_sw, p_land, fails, clamps, detail, anc
 
 
 class WalkNode(Node):
@@ -335,7 +344,7 @@ class WalkNode(Node):
                 p_mem = self.memory.update(est.p, contact, v_clip, wz_clip, dt)
                 v_ref = self.p["v_gain"] * self.v_cmd
                 v_ref_G = v_ref * est.R_des[:, 0]
-                self.q_sw, p_land, fails, clamps, detail = swing_targets(
+                self.q_sw, p_land, fails, clamps, detail, _ = swing_targets(
                     self.gait, est, R, v_ref_G, self.w_cmd, p_mem, self.p["foot_r"], self.p["lift"], self.p["k_raibert"], self.p["step_max"], self.q_sw, contact,
                     r_max=reach(self.p["swing_knee_min"]),
                 )

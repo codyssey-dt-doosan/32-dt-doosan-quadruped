@@ -93,3 +93,15 @@ def test_swing_foot_endpoints_and_apex():
     mid = swing_foot(a, b, 0.425, 0.06, Z)  # land_at의 절반 위상 → 궤적 중간(정점)
     assert mid[0] == pytest.approx(0.05) and mid[2] == pytest.approx(-0.3 + 0.06)
     assert swing_foot(a, b, 0.95, 0.06, Z)[2] < b[2]
+
+
+def test_raibert_anchor_sets_plane_height():
+    hip = np.array([0.19, 0.10, 0.0])
+    a = np.array([0.30, 0.0, -0.25])  # 앞발이 5 cm 높은 곳을 밟은 기록
+    p = raibert(hip, O, Z, np.zeros(3), np.zeros(3), 0.0, 0.0, 0.167, 0.03, 0.12, anchor=a)
+    assert np.allclose(p[:2], hip[:2]) and p[2] == pytest.approx(-0.25)
+    n = np.array([-np.sin(0.3), 0, np.cos(0.3)])
+    p = raibert(hip, O, n, np.zeros(3), np.zeros(3), 0.0, 0.0, 0.167, 0.03, 0.12, anchor=a)
+    assert (p - a) @ n == pytest.approx(0.0, abs=1e-12)
+    assert np.allclose(raibert(hip, O, n, np.zeros(3), np.zeros(3), 0.0, 0.0, 0.167, 0.03, 0.12, anchor=None),
+                       raibert(hip, O, n, np.zeros(3), np.zeros(3), 0.0, 0.0, 0.167, 0.03, 0.12))
