@@ -55,6 +55,18 @@ def com_target(n, height: float, com_shift: float) -> np.ndarray:
     return (1.0 - com_shift) * height * n + com_shift * np.array([0.0, 0.0, height / n[2]])
 
 
+def transport(p, v_G, wz: float, dt: float) -> np.ndarray:
+    """세계 고정점들의 G 좌표(몸체 원점 기준)를 몸체 이동 v_G·yaw 회전 wz만큼 갱신: Rz(−ω_z dt)(p − v dt)."""
+    c, s = math.cos(-wz * dt), math.sin(-wz * dt)
+    Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    return (Rz @ (np.asarray(p, float) - np.asarray(v_G, float) * dt).T).T
+
+
+def slope_vz(n, v_G) -> float:
+    """몸체가 지형 평면(법선 n)을 따라 움직인다고 볼 때의 수직 속도(n·v = 0). 평지면 0."""
+    return -(n[0] * v_G[0] + n[1] * v_G[1]) / n[2]
+
+
 class FootMemory:
     """발마다 마지막 접촉점(G, 몸체 원점 기준). 비접촉 발은 몸체 이동·yaw 회전만큼 되돌려 세계 고정점을 유지한다.
 
@@ -69,9 +81,7 @@ class FootMemory:
         if self.p is None:
             self.p = p_G.copy()
             return self.p
-        c, s = math.cos(-wz * dt), math.sin(-wz * dt)
-        Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
-        moved = (Rz @ (self.p - np.asarray(v_G, float) * dt).T).T
+        moved = transport(self.p, v_G, wz, dt)
         self.p = np.where(contact[:, None], p_G, moved)
         return self.p
 
@@ -100,3 +110,35 @@ def estimate(q12, qd12, R_GB, omega_B, contact, foot_r: float, com_offset_B, pla
     v = v_body + np.cross(R @ w_B, c_com)
     R_des = terrain_frame(n)
     return Estimate(n, t1, t2, p, p - c_com, x, v, R_des, c_B, J)
+
+
+class StepHistory:
+    """최근 이륙 발의 접지점(G, 몸체 원점 기준) — 뒷발이 앞발이 밟은 높이로 착지하게(C안 ⑤-1).
+
+    FootMemory와 같은 transport로 매 틱 이동, max_age s 지나면 버림(이동 적분 오차 누적 방지).
+    """
+
+    def __init__(self, max_n: int = 32, max_age: float = 2.0) -> None:
+        self.max_n, self.max_age = max_n, max_age
+        self.clear()
+
+    def clear(self) -> None:
+        self.p, self.age = np.zeros((0, 3)), np.zeros(0)
+
+    def push(self, pts) -> None:
+        pts = np.asarray(pts, float).reshape(-1, 3)
+        self.p = np.vstack([self.p, pts])[-self.max_n :]
+        self.age = np.concatenate([self.age, np.zeros(len(pts))])[-self.max_n :]
+
+    def update(self, v_G, wz: float, dt: float) -> None:
+        self.p, self.age = transport(self.p, v_G, wz, dt), self.age + dt
+        keep = self.age <= self.max_age
+        self.p, self.age = self.p[keep], self.age[keep]
+
+    def nearest(self, xy, r: float):
+        """xy 거리 r 이내 최근접 기록점(3,) 복사본, 없으면 None."""
+        if not len(self.p):
+            return None
+        d = np.hypot(*(self.p[:, :2] - np.asarray(xy, float)[:2]).T)
+        i = int(np.argmin(d))
+        return self.p[i].copy() if d[i] <= r + 1e-12 else None
