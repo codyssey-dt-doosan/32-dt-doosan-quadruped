@@ -24,6 +24,7 @@ setup(
     entry_points={
         "console_scripts": [
             "gauge_ocr_node = gauge_ocr.gauge_ocr_node:main",
+            "make_viewpoints = gauge_ocr.make_viewpoints:main",
         ],
     },
 )

@@ -1,4 +1,5 @@
 # gauge_ocr 파라미터 (corridor). 게이지 사양은 시뮬 게이지 모델에 바늘이 들어가면 그 값에 맞춘다.
+# rclpy는 파라미터 타입 변경을 거부하므로 실수 값은 소수점을 유지 (60.0, 60 아님).
 gauge_ocr:
   ros__parameters:
     phi_min: 225.0          # 최소값 바늘 각도 (12시 기준 시계 방향, 도)
@@ -9,3 +10,8 @@ gauge_ocr:
     stop_speed: 0.05        # m/s 미만이면 정차로 본다
     require_stop: true      # false면 정차 판정 없이 항상 판독 (bag·단독 테스트용)
     publish_debug: true
+    # 점검 위치 계산 (/inspection/gauge_viewpoints, make_viewpoints와 같은 기본값)
+    margin_deg: 5.0         # 화면 위 가장자리 여유각
+    arrive_tol: 0.4         # 순찰 도착 오차만큼 더 가까이 서도 화면에 들어오게
+    robot_radius: 0.35      # 장애물 검사용 몸체 반경
+    min_dial_px: 20.0       # 멀리 섰을 때 원판 지름이 이보다 작으면 불가

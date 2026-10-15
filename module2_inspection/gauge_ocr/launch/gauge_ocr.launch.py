@@ -13,12 +13,20 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription(
         [
             DeclareLaunchArgument("world", default_value="corridor"),
+            DeclareLaunchArgument("locomotion", default_value="velocity"),  # full_system이 넘겨 줌
             Node(
                 package="gauge_ocr",
                 executable="gauge_ocr_node",
                 name="gauge_ocr",
                 output="screen",
-                parameters=[params_file, {"world": world, "use_sim_time": True}],
+                parameters=[
+                    params_file,
+                    {
+                        "world": world,
+                        "locomotion": LaunchConfiguration("locomotion"),
+                        "use_sim_time": True,
+                    },
+                ],
             ),
         ]
     )
