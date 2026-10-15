@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>inspection_common</name>
+  <version>0.1.0</version>
+  <description>module2 점검 공용: 맵(SDF) 읽기, 기하, 점검 위치, 상태 문자열</description>
+  <maintainer email="team@doosan.local">운학</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>ament_index_python</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
