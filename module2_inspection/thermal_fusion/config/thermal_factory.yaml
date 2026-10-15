@@ -1,0 +1,26 @@
+# thermal_fusion 파라미터 (factory). 지금 시뮬 열화상은 흑백 밝기 카메라라 brightness 모드.
+# rclpy는 파라미터 타입 변경을 거부하므로 실수 값은 소수점을 유지 (60.0, 60 아님).
+# L16 열화상 센서로 바꾸면: thermal_mode l16, t_detect 60.0, t_confirm 60.0, overlay 20~90.
+thermal_fusion:
+  ros__parameters:
+    thermal_mode: brightness    # l16 | l8_thermal | brightness
+    t_detect: 240.0             # 블롭 검출 임계 (brightness는 0~255 밝기)
+    t_confirm: 240.0            # 점검 위치에서 이 값 이상이면 확정
+    min_area: 20                # 열화상 px
+    merge_radius: 1.0           # m 이내 검출은 같은 지점
+    confirm_frames: 3
+    forget_s: 3.0
+    dwell_s: 5.0
+    arrive_tol: 0.4
+    stop_speed: 0.05
+    inspect_timeout: 60.0
+    max_attempts: 2
+    recheck_s: 0.0              # 0이면 확정된 지점을 다시 보지 않음
+    approach_dist: 1.5
+    robot_radius: 0.35
+    max_range: 15.0
+    odom_timeout: 1.0
+    image_timeout: 1.0          # 열화상이 이만큼 안 오면 상태 IDLE | no image
+    overlay_lo: 100.0
+    overlay_hi: 255.0
+    publish_overlay: true
