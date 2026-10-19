@@ -43,3 +43,6 @@ docs/captures/*.png
 .ignition/
 .gz/
 *.cache
+
+# Temporary reference-video frames and staging scripts
+/.runtime/unity-reference/

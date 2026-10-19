@@ -1,0 +1,156 @@
+{
+  "reference_video_seconds": 61.7373,
+  "scene": "Assets/Scenes/Plant_VideoReference.unity",
+  "original_scene_preserved": "Assets/OutdoorsScene.unity",
+  "route_points": [
+    {
+      "name": "South_Aisle",
+      "position": [
+        20.0,
+        0.0,
+        -6.25
+      ]
+    },
+    {
+      "name": "East_Aisle",
+      "position": [
+        21.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "Return_Aisle",
+      "position": [
+        6.0,
+        0.0,
+        -5.5
+      ]
+    },
+    {
+      "name": "Transit_0_0",
+      "position": [
+        5.5,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "Transit_6_0",
+      "position": [
+        5.5,
+        0.0,
+        -0.75
+      ]
+    },
+    {
+      "name": "01_Ramp_Approach",
+      "position": [
+        -36.0,
+        0.0,
+        0.5499951
+      ]
+    },
+    {
+      "name": "02_Ramp_Top",
+      "position": [
+        -30.0,
+        0.0,
+        0.5499951
+      ]
+    },
+    {
+      "name": "Machine_East",
+      "position": [
+        19.0,
+        0.0,
+        4.75
+      ]
+    },
+    {
+      "name": "Factory_Exit",
+      "position": [
+        0.75,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "Inspect_Gauges",
+      "position": [
+        8.5,
+        0.0,
+        4.0
+      ]
+    },
+    {
+      "name": "Home",
+      "position": [
+        -44.0,
+        0.0,
+        0.5499951
+      ]
+    },
+    {
+      "name": "03_Corridor_Clear",
+      "position": [
+        -5.0,
+        0.0,
+        1.4999951
+      ]
+    },
+    {
+      "name": "04_Factory_Entry",
+      "position": [
+        0.75,
+        0.0,
+        1.0999951
+      ]
+    },
+    {
+      "name": "Corridor_Return",
+      "position": [
+        -30.0,
+        0.0,
+        0.5499951
+      ]
+    },
+    {
+      "name": "North_Aisle",
+      "position": [
+        6.0,
+        0.0,
+        5.25
+      ]
+    }
+  ],
+  "motion_observation": {
+    "elapsed": 12.001047134399414,
+    "start": {
+      "x": -44.0,
+      "y": -0.8296087980270386,
+      "z": 0.5499951243400574
+    },
+    "end": {
+      "x": -28.70954132080078,
+      "y": 0.02500009536743164,
+      "z": 0.6013153195381165
+    },
+    "distance": 15.314409255981445,
+    "grounded": true,
+    "waypoint": 2,
+    "animatorPlaying": true
+  },
+  "visual_checks": [
+    "ramp ascent",
+    "factory entrance",
+    "factory equipment aisle",
+    "corridor return"
+  ],
+  "scope": "Unity staging and animation demo, no ROS bridge or quadruped dynamics added",
+  "lighting": {
+    "separate_profile": "Assets/DoosanReference/PlantLighting.asset",
+    "fixed_exposure_ev": 8,
+    "lights": 19
+  }
+}
