@@ -1,0 +1,14 @@
+{
+    "elapsed": 148.235981,
+    "connected": true,
+    "commandFresh": true,
+    "commands": 2910,
+    "odom": 2171,
+    "images": 671,
+    "clouds": 671,
+    "position": {
+        "x": 19.178918838500977,
+        "y": 0.025000691413879395,
+        "z": 4.421159744262695
+    }
+}

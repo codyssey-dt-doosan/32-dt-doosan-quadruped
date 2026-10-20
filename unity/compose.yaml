@@ -1,0 +1,28 @@
+services:
+  rosbridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.rosbridge
+    image: doosan-unity-rosbridge:local
+    container_name: doosan-unity-rosbridge
+    ipc: shareable
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./tools:/workspace/unity-tools:ro
+      - ./config:/workspace/unity-config:ro
+    init: true
+  inspection:
+    image: doosan-unity-rosbridge:local
+    profiles: [inspection]
+    depends_on: [rosbridge]
+    network_mode: service:rosbridge
+    ipc: service:rosbridge
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    volumes:
+      - ./tools:/workspace/unity-tools:ro
+      - ./config:/workspace/unity-config:ro
+      - ../module2_inspection/gauge_ocr:/workspace/inspection/gauge_ocr:ro
+    command: [bash, /workspace/unity-tools/start_inspection.sh]
+    init: true

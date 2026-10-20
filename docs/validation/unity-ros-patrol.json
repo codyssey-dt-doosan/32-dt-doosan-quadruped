@@ -1,0 +1,9 @@
+{
+  "odom_samples": 132,
+  "furthest_forward_m": 14.025277137756348,
+  "height_gain_m": 0.8767207860946655,
+  "single_ros_command_source": true,
+  "ros_patrol_climbs_unity_ramp": true,
+  "camera_captured": true,
+  "passed": true
+}

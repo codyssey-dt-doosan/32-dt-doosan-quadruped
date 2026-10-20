@@ -1,0 +1,6 @@
+{
+  "reconnected": true,
+  "samples": 40,
+  "idle_displacement_m": 0.0,
+  "stale_command_not_replayed": true
+}

@@ -1,0 +1,42 @@
+{
+  "ever": {
+    "gauge": true,
+    "thermal": true,
+    "gas_alarm": true
+  },
+  "events": [
+    {
+      "event": "thermal",
+      "sim_s": 59.821900708,
+      "value": 95.0
+    },
+    {
+      "event": "gauge",
+      "sim_s": 83.385609176,
+      "value": 6.222222222222222
+    },
+    {
+      "event": "gas_alarm",
+      "sim_s": 115.565169975,
+      "value": 52.610836029052734
+    }
+  ],
+  "counts": {
+    "rgb": 1150,
+    "thermal": 1522,
+    "gas": 1523
+  },
+  "latest": {
+    "gauge_bar": 6.222222222222222,
+    "temperature_c": 22.0,
+    "gas_ppm": 0.0,
+    "exposure_ppm_s": 403.2517897338219,
+    "sim_s": 230.507812854,
+    "gauge_valid": false,
+    "thermal_valid": true,
+    "gas_valid": true,
+    "gauge_alert": false,
+    "thermal_alert": false,
+    "gas_alert": true
+  }
+}
