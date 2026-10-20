@@ -58,8 +58,7 @@ ros2 launch simulation full_system.launch.py locomotion:=legged    # 전체 스�
 - 다중 `<joint_name>` 컨트롤러는 첫 관절만 피드백한다(묶으면 전도) → 관절마다 하나.
 - `gait_node`: 곧은 다리 → 명목 자세(`d_nominal` 0.25) 2 s 램프 후 대각 쌍(FL·RR / FR·RL) trot. `/cmd_vel` (v, w)를 0.3 s로 평활해, 지지 발을 뒤로 쓸어 전진하고 좌우 보폭 차이로 회전한다. **개루프**(균형·속도 피드백 없음) — 남는 추종 오차는 위층이 odom으로 닫는다. 토픽 `/legged/<joint>`(Float64) × 12.
 - 보정 손잡이: `turn_arm` 0.38(회전 — 기하 0.14로는 앞뒤 발 횡마찰에 42%만 돈다. 2 Hz에선 0.33, 3 Hz에선 0.38이 맞았다), `v_gain` 1.0(전진), `x_max` 0.10(반보폭 한계). `mu`·`p_gain`·`stride_hz`가 바뀌면 다시 맞출 것.
-- 런치 인자: `world` · `gui` · `trot` · `mu` 0.8 · `p_gain` 120 · `d_gain` 2.0. 노드 파라미터: `d_nominal` · `lift` · `stride_hz` 3.0 · `duty` 0.5 · `standup_s` 2.0 · `cmd_timeout` 0.5 · `force_trot` · `turn_arm` · `v_gain` · `x_max`. · `step_anchor` false(밟은 자리 기록 착지 보정·경사 추종 발 기억 — 옵트인 실험, 이득 근거 없음)
-- walk status 진단 필드: `late`(지지 시작 30 ms 후 센서 미접촉 횟수) · `anchor_hit`(기록 높이 사용 비율, step_anchor 켰을 때) · `land_err_mm`(센서 착지 순간 실제−목표 높이 med/p10/p90/n). `walk_metrics --slope` 출력의 `y_drift`는 코스 안 진입 y 대비 최대 횡 이탈(기준 3·5), `y_max`는 정보용(캡처 전체 절대 y).
+- 런치 인자: `world` · `gui` · `trot` · `mu` 0.8 · `p_gain` 120 · `d_gain` 2.0. 노드 파라미터: `d_nominal` · `lift` · `stride_hz` 3.0 · `duty` 0.5 · `standup_s` 2.0 · `cmd_timeout` 0.5 · `force_trot` · `turn_arm` · `v_gain` · `x_max`.
 - 실측(corridor 헤드리스 10 s, `stride_hz` 3.0·`turn_arm` 0.38): (v 0.3, w 0) → 0.267 m/s · (0, 0.5) → 0.502 rad/s · (0.5, 1.0) → 0.426 m/s·0.866 rad/s · 후진 (−0.2, 0) → −0.199 m/s, 기울기 최대 2.0°. 제자리 trot 기울기 0.8°·발 이격 3.4~3.6 cm. `/cmd_vel` 없으면 기립, 발행이 끊기면 기립으로 복귀.
 - **맥 GUI는 일시정지로 시작한다**(로봇이 z 0.4 공중에 멈춰 있고 `trot_metrics.py`가 lift 0으로 FAIL) → 창 좌하단 ▶를 누르거나 `gz service -s /world/<world>/control --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean --timeout 3000 --req 'pause: false'`. 헤드리스는 해당 없음. `gait_node`는 sim time 기준이라 ▶ 누른 시점부터 기립 램프가 시작된다. corridor는 벽이 로봇을 가리므로 Entity Tree에서 벽 우클릭 → View → Transparent.
 
@@ -124,7 +123,8 @@ ros2 launch mpc_controller legged.launch.py slope_deg:=15     # 대조군: 개�
 
 - 구조: `srb_mpc.py`(SRB 동역학·이산화·condensing·QP) · `gait.py`(위상·스케줄·Raibert 착지·스윙 궤적) · `body_estimate.FootMemory`(trot 2발 접촉에서도 최근 착지점 4개로 지형 평면) · `walk_node.py`(200 Hz 추정·50 Hz MPC·1 kHz 관절 토크). 지지 발 τ = −Jᵀf(접촉 자코비안), 스윙 발은 IK + 관절 PD.
 - 모드: `standup`(0~2 s PD 램프) → `blend` → `stand`(MPC, 4발) → `walk`(명령 있을 때 gait 활성, 끊기면 정지 전이) → `hold`(QP 실패 50 ms·기울기 45°·IMU/관절 0.1 s·IK 실패 20틱, 래치).
-- 런치 인자: `world` · `gui` · `mu` 0.8 · `slope_deg`·`slope_len` 3.0 · `ramp_deg` · 튜닝용 `stride_hz` 3.0 · `lift` 0.025 · `k_raibert` 0.03 · `v_gain` 1.12 · `q_weights`·`q_weights_walk`(13개 쉼표) · `alpha` · `height`·`height_walk` · `contact_source` sensor(기본)|kinematic · `contact_sensors`(kinematic 판정에서 센서만 붙여 계측) · `touch_h` 0.008(kinematic 판정 높이) · `swing_knee_min` 0.7(스윙 목표 무릎 최소 굽힘 rad) · `real_time_factor` 1.0(<1이면 시뮬을 느리게 — 실측용, `walk_metrics --rtf`를 같은 값으로).
+- 런치 인자: `world` · `gui` · `mu` 0.8 · `slope_deg`·`slope_len` 3.0 · `ramp_deg` · 튜닝용 `stride_hz` 3.0 · `lift` 0.025 · `k_raibert` 0.03 · `v_gain` 1.12 · `q_weights`·`q_weights_walk`(13개 쉼표) · `alpha` · `height`·`height_walk` · `contact_source` sensor(기본)|kinematic · `contact_sensors`(kinematic 판정에서 센서만 붙여 계측) · `touch_h` 0.008(kinematic 판정 높이) · `swing_knee_min` 0.7(스윙 목표 무릎 최소 굽힘 rad) · `real_time_factor` 1.0(<1이면 시뮬을 느리게 — 실측용, `walk_metrics --rtf`를 같은 값으로). · `step_anchor` false(밟은 자리 기록 착지 보정·경사 추종 발 기억 — 옵트인 실험, 이득 근거 없음)
+- walk status 진단 필드: `late`(지지 시작 30 ms 후 센서 미접촉 횟수) · `anchor_hit`(기록 높이 사용 비율, step_anchor 켰을 때) · `land_err_mm`(센서 착지 순간 실제−목표 높이 med/p10/p90/n). `walk_metrics --slope` 출력의 `y_drift`는 코스 안 진입 y 대비 최대 횡 이탈(기준 3·5), `y_max`는 정보용(캡처 전체 절대 y).
 - 실측 확정 튜닝(스펙 기본값에서 바뀐 것): `height`·`height_walk` 0.30(0.32는 서 있으면 다리 도달 93%라 좌굴하고, 보행 중엔 몸체가 7 mm 더 떠 착지가 17 ms 늦음) · `lift` 0.025 · `step_max` 0.08 · `v_gain` 1.12(MPC 추종이 89%로 일관) · Q 정지 p_xy 20·v_xy 0.5(밀기 반응), 보행 v_xy 8·p_z 50 · 속도 추정 = `/odom` twist(v_z는 정지 시 다리 오도메트리 저역통과, 보행 시 0) · 지형 법선 저역통과 0.3 s · 스윙은 s 0.85에 착지 후 1 cm 밀기 · 조기 착지만 판정(기본은 발 contact 센서 — 운동학 판정은 발 높이 추정이 10 ms에 4 cm 튀는 것에 속아 공중 발에 힘을 줌) · MPC k=0 접촉 = 실제, 접촉 변화 시 즉시 MPC.
 
 실측(corridor 헤드리스, `log/walk_run.sh <태그> walk_metrics.py <인자> -- [런치 인자]`, 로컬 스크립트):
@@ -134,9 +134,9 @@ ros2 launch mpc_controller legged.launch.py slope_deg:=15     # 대조군: 개�
 | 1 | 평지 (v,w) 15 s | (0.3,0) → 0.314 m/s · (0,0.5) → 0.476 rad/s · (0.5,1.0) → 0.508/0.963 · (−0.2,0) → −0.201(후진은 8 s — 15 s면 서쪽 벽에 닿아 −0.14), 기울기 ≤2.4°, z_std <1 cm. 2026-10-04 기본값(센서·높이 0.30·무릎 여유 0.7): 0.291 · 0.476 · 0.484/0.964 · −0.206, 기울기 ≤0.9°, 포화 ≤31 | PASS(오차 <5%) |
 | — | 기립 40 s · 밀기 +y 20 N×0.5 s | z_std 0.00 mm·기울기 0.05° · 밀기 기울기 1.1°·이탈 2.7 cm(balance 2.2°/3.4 cm) | PASS |
 | 2 | 위층 `/cmd_vel` 재생 | 60 s 전체는 개루프 재생이 corridor 장애물에 부딪힘 → 20 s 창(`--replay-window 40 20`, 직진→회전→복합, 녹화 v×0.8). 센서 판정·높이 0.30에서 10회 전도 0, rms_v 0.013·rms_w 0.006·종점 오차 4%, 포화 ≤50은 7/10. 무릎 여유 0.7 추가 후 5회 중 4회 PASS(rms_v 0.008·종점 1.7%·포화 ≤32), 1회 전도(미해결 6) | PASS 4/5 |
-| 3·4·5 | 경사 15°·20° (RTF 0.5) | 15°: 완주 3/3(유효 3회), 내리막 최대 기울기 17.6·20.2·17.2°, 횡 드리프트 0.30·1.00·0.11 m. 20°: 완주 1/2, 오르막 0.29 m/s, 내리막 26.8°. 입구 전도는 10-04 평지 수정 후 재현 안 됨 | 15° 4·5 대체로 PASS, 20° 3 FAIL |
+| 3·4·5 | 경사 15°·20° (RTF 0.5) | 15°: 완주 3/3(유효 3회), 내리막 최대 기울기 17.6·20.2·17.2°, 횡 드리프트 0.30·1.00·0.11 m. 20°: 완주 1/2(완주한 1회도 완주 후 hold), 오르막 0.29 m/s, 내리막 26.8°. 입구 전도는 10-04 평지 수정 후 재현 안 됨 | 15° 4·5 대체로 PASS, 20° 3 FAIL |
 | 6 | 계산 | MPC 평균 1.6~2.1 ms·p99 ≈2 ms(GUI 부하 7 ms) | PASS |
-| 7 | 회귀 | pytest 146, balance 기립 동률(z_std 0.01 mm·drift 0.1 cm), `legged.launch.py` 불변 | PASS |
+| 7 | 회귀 | pytest 162, balance 기립 동률(z_std 0.01 mm·drift 0.1 cm), `legged.launch.py` 불변 | PASS |
 
 - **기준 2 지표(2026-09-28 재정의)**: `walk_metrics --replay`는 보폭 창(1/stride_hz = 0.33 s) 평균 속도로 RMS를 잰다. 명령이 바뀐 뒤 0.5 s 안에 걸친 창은 가속 구간이라 제외(`n_win` = 채점 창 수). 틱별 포즈 미분은 trot 흔들림이 그대로 들어가 v 0.3 일정 명령에서도 rms_v 0.071이 나와 0.05 기준에 원리적으로 못 미쳤다.
 
