@@ -36,6 +36,7 @@ public static class DoosanInspectionSceneSetup
         root.GetComponent<DoosanReferencePatrol>().paused=false;
         EditorSceneManager.MarkSceneDirty(UnityEngine.SceneManagement.SceneManager.GetActiveScene());EditorSceneManager.SaveScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene());AssetDatabase.SaveAssets();
         DoosanNativeGaugeSetup.Configure();
+        DoosanGasMapSetup.Configure();
         Debug.Log("Inspection scene ready: original three equipment gauges, synthetic 95 C surface, simulated 120 ppm gas source.");
     }
     [MenuItem("Doosan/ROS 2/Align Gas Visualization")]

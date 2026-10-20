@@ -32,6 +32,7 @@ class Patrol(Node):
     def reset(self):
         self.index=0;self.mode='patrol';self.phase='waiting_for_sensors';self.visited=[];self.retreat=[]
         self.dwell_until=0.;self.return_after=0.;self.station={};self.events=[];self.gas_latched=False;self.inspection_failed=False
+        self.home_since=None
         self.sensor_at=0.;self.sensor={}
 
     def on_odom(self,msg):
@@ -55,15 +56,31 @@ class Patrol(Node):
         yaw=math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z))
         error=wrap(math.atan2(dy,dx)-yaw)
         cmd.angular.z=max(-1.,min(1.,2.2*error))
-        cmd.linear.x=min(self.cruise_speed,distance*1.4)*max(0.,math.cos(error)) if abs(error)<.65 else 0.
+        # Dock slowly near Home: feedback travels through the simulator and rosbridge.
+        limit,gain=(min(self.cruise_speed,.35),.6) if target['name']=='Home' and distance<4 else (self.cruise_speed,1.4)
+        cmd.linear.x=min(limit,distance*gain)*max(0.,math.cos(error)) if abs(error)<.65 else 0.
         if distance<.15:cmd.linear.x=cmd.angular.z=0.;return True,yaw
         return False,yaw
+
+    def dock_home(self,cmd):
+        arrived,_=self.navigate({'name':'Home','x':0.,'y':0.},cmd)
+        velocity=self.pose.twist.twist.linear
+        stationary=math.hypot(velocity.x,velocity.y)<.05
+        if arrived and stationary:
+            if self.home_since is None:self.home_since=self.stamp
+            if self.stamp-self.home_since>=2:self.mode='home'
+        else:self.home_since=None
+        self.set_phase('home_safe:gas_alarm_latched' if self.mode=='home' else 'return:Home')
 
     def tick(self):
         cmd=Twist();now=time.monotonic();s=self.sensor
         fresh=self.pose is not None and now-self.odom_at<1 and now-self.sensor_at<2 and s.get('thermal_valid') and s.get('gas_valid')
-        if not fresh:self.set_phase('hold:sensor_data_missing');self.pub.publish(cmd);return
-        if self.mode=='home':self.set_phase('home_safe:gas_alarm_latched');self.pub.publish(cmd);return
+        if not fresh:self.home_since=None;self.set_phase('hold:sensor_data_missing');self.pub.publish(cmd);return
+        if self.mode=='home':
+            p=self.pose.pose.pose.position
+            if math.hypot(p.x,p.y)<.2:self.set_phase('home_safe:gas_alarm_latched');self.pub.publish(cmd);return
+            self.mode='dock';self.home_since=None
+        if self.mode=='dock':self.dock_home(cmd);self.pub.publish(cmd);return
         if s.get('gas_alert') and not self.gas_latched:
             self.gas_latched=True;self.mode='return';self.return_after=self.stamp+2
             self.retreat=[self.route[i] for i in reversed(self.visited)]+[{'name':'Home','x':0.,'y':0.}]
@@ -74,7 +91,7 @@ class Patrol(Node):
             self.set_phase('return:'+target['name'])
             if arrived:
                 self.retreat.pop(0)
-                if not self.retreat:self.mode='home';self.set_phase('home_safe:gas_alarm_latched')
+                if not self.retreat:self.mode='dock';self.home_since=None
         elif self.inspection_failed:
             self.set_phase('hold:inspection_failed');cmd=Twist()
         else:

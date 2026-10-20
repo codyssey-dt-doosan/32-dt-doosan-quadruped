@@ -2,6 +2,8 @@
 
 게이지 판독·가상 온도 측정·가스 노출 경보와 복귀가 연결된 최신 시연은 `Assets/Scenes/Plant_Inspection.unity`와 [INSPECTION.md](INSPECTION.md)를 사용한다.
 
+제공 영상과 Modeling 에셋을 사용한 가스탱크 누출 구역도 점검 씬에 포함한다. 밸브 분출 효과·바닥 경계·ROS 센서와 순찰 경로 연결은 [GAS_MAP.md](GAS_MAP.md)에 설명한다.
+
 참고: 사용자가 제공한 `sample_robot.mp4` (61.74초). 영상의 복도 → 공장 → 설비 점검 → 복도 복귀 구성을 제공 에셋으로 배치했다.
 
 완성 씬은 `Assets/Scenes/Plant_VideoReference.unity`다. 기존 `Assets/OutdoorsScene.unity`를 복사해 작업했다. 이 폴더는 전체 Unity 프로젝트가 아니라 기존 과제 에셋에 추가하는 씬·스크립트·설정 묶음이다.
@@ -18,8 +20,8 @@ Unity에서 씬을 열고 **Play**를 누른다. `Space`는 일시정지, `Tab`�
 
 `Scripts`의 C#을 Unity의 `Assets/Scripts`에, `Editor`의 C#을 `Assets/Editor`에 넣으면 **Doosan → Build Video Reference Scene**에서 재생성할 수 있다. 재생성은 기존 `Plant_VideoReference` 작업을 덮어쓰므로 씬을 직접 수정했다면 다른 이름으로 저장한다. 원본 에셋의 기존 경로와 Unity 6 HDRP, Input System 패키지가 필요하다. 씬·재질은 원본 과제 에셋을 참조하며 원본 에셋 자체는 이 폴더에 중복 저장하지 않는다.
 
-영상 시연의 이동은 CharacterController와 제공 보행 애니메이션을 사용한다. 녹색 파티클은 점검 위치를 보여 주는 시각 효과다.
+영상 시연의 이동은 CharacterController와 제공 보행 애니메이션을 사용한다. `Plant_VideoReference`의 녹색 파티클은 시각 효과이며, `Plant_Inspection`에서는 탱크의 가상 농도 기준점과 연결된다.
 
 ## ROS 2 연결
 
-`Assets/Scenes/Plant_ROS2.unity`는 별도의 ROS 제어 씬이다. `/cmd_vel`을 받아 이동하고 `/odom`, `/tf`, `/clock`, `/camera/image`, `/camera/camera_info`, `/points`, `/imu`를 ROS 2로 보낸다. 이 씬에서는 Unity 자체 순찰이 개입하지 않는다. ROS 순찰 노드와 실행·검증 방법은 [ROS2.md](ROS2.md)를 참고한다. 실제 다리 역학 제어와 가스 농도 계산은 별도 구현 항목이다.
+`Assets/Scenes/Plant_ROS2.unity`는 별도의 ROS 제어 씬이다. `/cmd_vel`을 받아 이동하고 `/odom`, `/tf`, `/clock`, `/camera/image`, `/camera/camera_info`, `/points`, `/imu`를 ROS 2로 보낸다. 이 씬에서는 Unity 자체 순찰이 개입하지 않는다. ROS 순찰 노드와 실행·검증 방법은 [ROS2.md](ROS2.md)를 참고한다. 가상 농도·경보·복귀는 `Plant_Inspection`에서 구현하며, 실제 다리 역학 제어와 물리적 가스 확산 계산은 포함하지 않는다.

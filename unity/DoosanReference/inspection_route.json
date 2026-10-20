@@ -66,6 +66,14 @@
             "inspection": false
         },
         {
+            "name": "Gas_Leak_Approach",
+            "x": 61.499996185302734,
+            "y": 0.7000011801719666,
+            "dwell_s": 0.0,
+            "yaw": 0.0,
+            "inspection": false
+        },
+        {
             "name": "East_Aisle",
             "x": 64.99999237060547,
             "y": -0.549998939037323,
