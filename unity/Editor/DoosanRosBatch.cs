@@ -14,7 +14,12 @@ public static class DoosanRosBatch
     static DoosanRosBatch(){if(SessionState.GetBool(Running,false))Hook();}
     public static void Run()
     {
-        EditorSceneManager.OpenScene(DoosanRosSceneSetup.ScenePath);
+        Begin(DoosanRosSceneSetup.ScenePath);
+    }
+    public static void RunInspection(){Begin(DoosanInspectionSceneSetup.ScenePath);}
+    static void Begin(string scene)
+    {
+        EditorSceneManager.OpenScene(scene);
         SessionState.SetBool(Running,true);SessionState.SetString(Started,DateTime.UtcNow.Ticks.ToString());
         var root=GameObject.Find("Spot_Robot");root.GetComponent<DoosanReferencePatrol>().paused=false;
         QualitySettings.vSyncCount=0;Application.targetFrameRate=30;

@@ -16,6 +16,7 @@ from rosgraph_msgs.msg import Clock
 from nav_msgs.msg import Odometry
 from gauge_ocr.reader import GaugeSpec, read_gauge
 from inspection_logic import accumulate_exposure, alarm_gas
+from native_gauge_reader import read_native_gauges
 
 
 class Inspection(Node):
@@ -25,9 +26,11 @@ class Inspection(Node):
         self.clock=0.;self.last_clock=-1.;self.phase='';self.speed=0.
         self.values={'gauge_bar':0.,'temperature_c':0.,'gas_ppm':0.,'exposure_ppm_s':0.}
         self.received={};self.window=deque(maxlen=7);self.previous_gas_time=None;self.previous_ppm=0.
+        self.gauge_windows=[deque(maxlen=7) for _ in range(3)];self.gauges=[]
         self.events=[];self.ever={'gauge':False,'thermal':False,'gas_alarm':False};self.counts={'rgb':0,'thermal':0,'gas':0}
         self.pub_status=self.create_publisher(String,'/inspection/status',10)
         self.pub_gauge=self.create_publisher(Float32,'/inspection/gauge',10)
+        self.pub_gauges=self.create_publisher(String,'/inspection/gauges',10)
         self.pub_temp=self.create_publisher(Float32,'/inspection/temperature_c',10)
         self.pub_hot=self.create_publisher(Bool,'/inspection/thermal_alert',10)
         self.pub_dose=self.create_publisher(Float32,'/gas/exposure',10)
@@ -46,13 +49,17 @@ class Inspection(Node):
         if now < self.last_clock:
             self.received.clear();self.window.clear();self.previous_gas_time=None;self.values['exposure_ppm_s']=0.
             self.ever={'gauge':False,'thermal':False,'gas_alarm':False};self.events=[]
+            self.gauges=[]
+            for window in self.gauge_windows:window.clear()
         self.last_clock=self.clock=now;self.received['clock']=time.monotonic()
 
     def on_odom(self,msg):
         v=msg.twist.twist.linear;self.speed=math.hypot(v.x,v.y)
 
     def on_mission(self,msg):
-        if msg.data!=self.phase:self.window.clear();self.received.pop('gauge',None)
+        if msg.data!=self.phase:
+            self.window.clear();self.received.pop('gauge',None)
+            for window in self.gauge_windows:window.clear()
         self.phase=msg.data;self.received['mission']=time.monotonic()
 
     def mark(self,key,value):
@@ -67,11 +74,20 @@ class Inspection(Node):
         if msg.encoding!='rgb8' or msg.step!=msg.width*3:return
         try: bgr=cv2.cvtColor(np.frombuffer(bytes(msg.data),np.uint8).reshape(msg.height,msg.width,3),cv2.COLOR_RGB2BGR)
         except ValueError:return
-        value,dbg=read_gauge(bgr,GaugeSpec())
-        if not math.isfinite(value):return
+        if self.cfg.get('gauge_source')=='native_triplet':
+            cv2.imwrite('/tmp/inspection-native-raw.jpg',bgr)
+            gauges,debug=read_native_gauges(bgr)
+            if len(gauges)!=3 or not all(g['valid'] for g in gauges):
+                cv2.imwrite('/tmp/inspection-native-unreadable.jpg',debug);return
+            for window,gauge in zip(self.gauge_windows,gauges):window.append(gauge['bar']);gauge['bar']=float(np.median(window))
+            self.gauges=gauges;value=max(g['bar'] for g in gauges)
+            self.pub_gauges.publish(String(data=json.dumps({'gauges':gauges,'calibration':'original_face_0_100_bar'},allow_nan=False)))
+        else:
+            value,dbg=read_gauge(bgr,GaugeSpec())
+            if not math.isfinite(value):return
+            from gauge_ocr.overlay import draw_overlay
+            debug=draw_overlay(bgr,value,dbg)
         self.window.append(value);self.values['gauge_bar']=float(np.median(self.window));self.mark('gauge',value)
-        from gauge_ocr.overlay import draw_overlay
-        debug=draw_overlay(bgr,value,dbg)
         out=Image();out.header=msg.header;out.width=msg.width;out.height=msg.height;out.encoding='bgr8';out.step=msg.width*3;out.data=debug.tobytes();self.pub_debug.publish(out)
         cv2.imwrite('/tmp/inspection-gauge.jpg',debug)
 
@@ -99,6 +115,7 @@ class Inspection(Node):
     def tick(self):
         clock_ok=self.fresh('clock')
         status=dict(self.values,sim_s=self.clock,gauge_valid=clock_ok and self.fresh('gauge'),thermal_valid=clock_ok and self.fresh('thermal'),gas_valid=clock_ok and self.fresh('gas'))
+        if self.cfg.get('gauge_source')=='native_triplet':status['gauges_bar']=[g['bar'] for g in self.gauges]
         status.update(gauge_alert=status['gauge_valid'] and status['gauge_bar']>=self.cfg['gauge_alarm_bar'],thermal_alert=status['thermal_valid'] and status['temperature_c']>=self.cfg['temperature_alarm_c'],gas_alert=status['gas_valid'] and alarm_gas(status['gas_ppm'],status['exposure_ppm_s'],self.cfg))
         self.pub_status.publish(String(data=json.dumps(status,allow_nan=False)))
         if status['gauge_valid']:self.pub_gauge.publish(Float32(data=status['gauge_bar']))

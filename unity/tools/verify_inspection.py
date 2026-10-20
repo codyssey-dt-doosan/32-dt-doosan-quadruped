@@ -21,7 +21,10 @@ def main():
     def inspect(msg):
         s=json.loads(msg.data)
         if s.get('gauge_valid'):
-            values['gauge_bar']=s['gauge_bar'];checks['rgb_gauge_accuracy']=abs(s['gauge_bar']-6.2)<.15
+            values['gauge_bar']=s['gauge_bar']
+            if 'gauges_bar' in s:
+                values['gauges_bar']=s['gauges_bar'];checks['rgb_gauge_readings']=len(s['gauges_bar'])==3 and all(math.isfinite(v) and 0<=v<=100 for v in s['gauges_bar'])
+            else:checks['rgb_gauge_readings']=abs(s['gauge_bar']-6.2)<.15
         if s.get('thermal_valid') and s['temperature_c']>80:
             values['temperature_c']=s['temperature_c'];checks['radiometric_temperature']=abs(s['temperature_c']-95)<.01
             checks['thermal_alert']=s['thermal_alert']
@@ -44,7 +47,7 @@ def main():
                     checks['stopped_at_home']=abs(c.linear.x)+abs(c.angular.z)<1e-6
                     checks['single_cmd_vel_publisher']=node.count_publishers('/cmd_vel')==1
                     break
-        required=['inspection_stop','rgb_gauge_accuracy','radiometric_temperature','thermal_alert','gas_exposure_alarm','gas_alarm_triggers_return','returned_home','stopped_at_home','single_cmd_vel_publisher']
+        required=['inspection_stop','rgb_gauge_readings','radiometric_temperature','thermal_alert','gas_exposure_alarm','gas_alarm_triggers_return','returned_home','stopped_at_home','single_cmd_vel_publisher']
         result={'checks':{k:bool(checks.get(k,False)) for k in required},'values':values,'phases':phases}
         result['passed']=all(result['checks'].values())
         Path('/tmp/inspection-verification.json').write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2),flush=True)

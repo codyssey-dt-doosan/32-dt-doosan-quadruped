@@ -19,18 +19,6 @@ public static class DoosanInspectionSceneSetup
         var inspect=root.AddComponent<UnityPlantInspection>();
         var group=new GameObject("08_ROS_Inspection_Stations");
         const string folder="Assets/DoosanReference/Inspection";Directory.CreateDirectory(folder);
-        // One meter panel, at the robot camera height and facing the Inspect_Gauges stop.
-        var panel=GameObject.CreatePrimitive(PrimitiveType.Quad);panel.name="Readable_Gauge_6_2bar";panel.layer=8;
-        panel.transform.SetParent(group.transform);panel.transform.position=new Vector3(8.5f,.56f,5.55f);panel.transform.localScale=Vector3.one*1.05f;
-        var tex=GaugeTexture(6.2f);File.WriteAllBytes(folder+"/gauge_6_2bar.png",tex.EncodeToPNG());UnityEngine.Object.DestroyImmediate(tex);
-        AssetDatabase.ImportAsset(folder+"/gauge_6_2bar.png",ImportAssetOptions.ForceSynchronousImport);
-        var importer=(TextureImporter)AssetImporter.GetAtPath(folder+"/gauge_6_2bar.png");importer.textureCompression=TextureImporterCompression.Uncompressed;importer.mipmapEnabled=false;importer.SaveAndReimport();
-        var material=Material("Gauge_Unlit",new Color(1,1,1));material.SetTexture("_UnlitColorMap",AssetDatabase.LoadAssetAtPath<Texture2D>(folder+"/gauge_6_2bar.png"));
-        AssetDatabase.CreateAsset(material,folder+"/Gauge.mat");panel.GetComponent<Renderer>().sharedMaterial=material;
-        var heater=GameObject.CreatePrimitive(PrimitiveType.Cube);heater.name="Thermal_Target_95C";heater.layer=8;
-        heater.transform.SetParent(group.transform);heater.transform.position=new Vector3(9.25f,.65f,5.5f);heater.transform.localScale=new Vector3(.42f,.7f,.30f);
-        heater.AddComponent<SimulatedHeatSurface>().temperatureC=95;
-        var hot=Material("Hot_Machine",new Color(.65f,.16f,.04f));AssetDatabase.CreateAsset(hot,folder+"/Heater.mat");heater.GetComponent<Renderer>().sharedMaterial=hot;
         var leak=GameObject.CreatePrimitive(PrimitiveType.Sphere);leak.name="Simulated_Gas_Source_120ppm";leak.layer=8;
         leak.transform.SetParent(group.transform);leak.transform.position=new Vector3(22.4f,.45f,0);leak.transform.localScale=Vector3.one*.22f;
         var gas=Material("Gas_Source",new Color(.2f,.7f,.25f));AssetDatabase.CreateAsset(gas,folder+"/Gas.mat");leak.GetComponent<Renderer>().sharedMaterial=gas;
@@ -47,7 +35,8 @@ public static class DoosanInspectionSceneSetup
         File.WriteAllText("Assets/DoosanReference/inspection_route.json",JsonUtility.ToJson(new InspectionRoute{frame_id="odom",waypoints=points.ToArray()},true));
         root.GetComponent<DoosanReferencePatrol>().paused=false;
         EditorSceneManager.MarkSceneDirty(UnityEngine.SceneManagement.SceneManager.GetActiveScene());EditorSceneManager.SaveScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene());AssetDatabase.SaveAssets();
-        Debug.Log("Inspection scene ready: RGB gauge 6.2 bar, synthetic 95 C surface, simulated 120 ppm gas source.");
+        DoosanNativeGaugeSetup.Configure();
+        Debug.Log("Inspection scene ready: original three equipment gauges, synthetic 95 C surface, simulated 120 ppm gas source.");
     }
     [MenuItem("Doosan/ROS 2/Align Gas Visualization")]
     public static void AlignGasVisualization()
@@ -62,22 +51,6 @@ public static class DoosanInspectionSceneSetup
         EditorSceneManager.SaveScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene());
     }
     static Material Material(string name,Color color){var m=new Material(Shader.Find("HDRP/Unlit"));m.name=name;m.SetColor("_UnlitColor",color);return m;}
-    static Texture2D GaugeTexture(float value)
-    {
-        int n=512;var tex=new Texture2D(n,n,TextureFormat.RGB24,false);float phi=(225+value/10*270)*Mathf.Deg2Rad;
-        var tip=new Vector2(Mathf.Sin(phi),Mathf.Cos(phi))*.77f;
-        for(int y=0;y<n;y++)for(int x=0;x<n;x++){
-            var p=new Vector2((x-n/2f)/(n*.35f),(y-n/2f)/(n*.35f));float r=p.magnitude;
-            Color c=new Color32(56,66,76,255);
-            if(r<1){c=new Color32(240,240,235,255);float angle=(Mathf.Atan2(p.x,p.y)*Mathf.Rad2Deg-225+360)%360;
-                if(r>.88f&&r<.98f&&angle<=270&&Mathf.Abs(angle/27-Mathf.Round(angle/27))<.065f)c=Color.black;
-                float t=Mathf.Clamp01(Vector2.Dot(p,tip)/tip.sqrMagnitude);if((p-tip*t).magnitude<.035f&&t>0)c=new Color32(230,13,13,255);
-                if(r<.09f)c=new Color32(25,25,25,255);
-            }
-            tex.SetPixel(x,y,c);
-        }
-        tex.Apply();return tex;
-    }
     [Serializable] public class InspectionPoint{public string name;public float x,y,dwell_s,yaw;public bool inspection;}
     [Serializable] public class InspectionRoute{public string frame_id;public InspectionPoint[] waypoints;}
 }

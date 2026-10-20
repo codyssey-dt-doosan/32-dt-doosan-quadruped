@@ -19,6 +19,10 @@ class Patrol(Node):
     def __init__(self):
         super().__init__('unity_inspection_patrol')
         self.route=json.loads(Path('/workspace/unity-config/inspection_route.json').read_text())['waypoints']
+        config=json.loads(Path('/workspace/unity-config/inspection.json').read_text())
+        self.cruise_speed=float(config.get('cruise_speed_mps',.85))
+        if not math.isfinite(self.cruise_speed) or not .05<=self.cruise_speed<=2.:
+            raise ValueError('cruise_speed_mps must be between 0.05 and 2.0 m/s')
         self.pub=self.create_publisher(Twist,'/cmd_vel',10);self.mission=self.create_publisher(String,'/mission/status',10)
         self.create_subscription(Odometry,'/odom',self.on_odom,10)
         self.create_subscription(String,'/inspection/status',self.on_inspection,10)
@@ -51,7 +55,7 @@ class Patrol(Node):
         yaw=math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z))
         error=wrap(math.atan2(dy,dx)-yaw)
         cmd.angular.z=max(-1.,min(1.,2.2*error))
-        cmd.linear.x=min(.85,distance*1.4)*max(0.,math.cos(error)) if abs(error)<.65 else 0.
+        cmd.linear.x=min(self.cruise_speed,distance*1.4)*max(0.,math.cos(error)) if abs(error)<.65 else 0.
         if distance<.15:cmd.linear.x=cmd.angular.z=0.;return True,yaw
         return False,yaw
 

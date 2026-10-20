@@ -7,6 +7,8 @@ using Doosan.Ros2;
 public class UnityPlantInspection : MonoBehaviour
 {
     public Transform gasSource;
+    public Transform inspectionLookTarget;
+    public float inspectionFov=28;
     public float gasPeakPpm=120,gasSigma=1.25f,ambientC=22,sensorHz=5;
     public int thermalWidth=80,thermalHeight=60;
     UnityRosBridge bridge;
@@ -16,8 +18,9 @@ public class UnityPlantInspection : MonoBehaviour
     string mission="Waiting for ROS inspection node",lastStatus="";
     double statusReceived=-100;
     InspectionStatus status;
-    [Serializable] public class InspectionStatus{public bool gauge_valid,thermal_valid,gas_valid,thermal_alert,gas_alert,gauge_alert;public float gauge_bar,temperature_c,gas_ppm,exposure_ppm_s;}
-    void OnEnable(){bridge=GetComponent<UnityRosBridge>();bridge.MessageReceived+=Receive;nextSample=0;}
+    Quaternion travelCameraRotation;float travelFov;
+    [Serializable] public class InspectionStatus{public bool gauge_valid,thermal_valid,gas_valid,thermal_alert,gas_alert,gauge_alert;public float gauge_bar,temperature_c,gas_ppm,exposure_ppm_s;public float[] gauges_bar;}
+    void OnEnable(){bridge=GetComponent<UnityRosBridge>();bridge.MessageReceived+=Receive;nextSample=0;if(bridge.sensorCamera){travelCameraRotation=bridge.sensorCamera.transform.localRotation;travelFov=bridge.sensorCamera.fieldOfView;}}
     void OnDisable(){if(bridge)bridge.MessageReceived-=Receive;if(heatPreview)Destroy(heatPreview);}
     void Receive(string json)
     {
@@ -27,6 +30,13 @@ public class UnityPlantInspection : MonoBehaviour
         if(message.topic=="/inspection/status"){
             lastStatus=message.msg.data;status=JsonUtility.FromJson<InspectionStatus>(lastStatus);statusReceived=Time.realtimeSinceStartupAsDouble;
         }
+    }
+    void Update()
+    {
+        if(!bridge.sensorCamera||!inspectionLookTarget)return;
+        bool inspecting=mission.StartsWith("align:")||mission.StartsWith("inspect:");
+        if(inspecting){bridge.sensorCamera.transform.LookAt(inspectionLookTarget.position);bridge.sensorCamera.fieldOfView=inspectionFov;}
+        else{bridge.sensorCamera.transform.localRotation=travelCameraRotation;bridge.sensorCamera.fieldOfView=travelFov;}
     }
     void LateUpdate()
     {
@@ -54,10 +64,14 @@ public class UnityPlantInspection : MonoBehaviour
         GUI.Label(new Rect(28,96,505,24),"SIMULATED PLANT INSPECTION | ROS 2");
         GUI.Label(new Rect(28,120,505,24),mission);
         bool fresh=status!=null&&Time.realtimeSinceStartupAsDouble-statusReceived<2;
-        GUI.Label(new Rect(28,145,380,24),fresh&&status.gauge_valid?"Gauge: "+status.gauge_bar.ToString("F2")+" bar" : "Gauge: awaiting a valid camera reading");
+        string gaugeLabel="Gauge: awaiting a valid camera reading";
+        if(fresh&&status.gauge_valid){
+            gaugeLabel=status.gauges_bar!=null&&status.gauges_bar.Length==3?"G1 / G2 / G3: "+string.Join(" / ",Array.ConvertAll(status.gauges_bar,v=>v.ToString("F1")))+" bar":"Gauge: "+status.gauge_bar.ToString("F2")+" bar";
+        }
+        GUI.Label(new Rect(28,145,380,24),gaugeLabel);
         GUI.Label(new Rect(28,169,380,24),fresh&&status.thermal_valid?"Thermal: "+status.temperature_c.ToString("F1")+" C"+(status.thermal_alert?"  HOT":"") : "Thermal: no fresh data");
         GUI.Label(new Rect(28,193,380,24),fresh&&status.gas_valid?"Gas: "+status.gas_ppm.ToString("F1")+" ppm | dose "+status.exposure_ppm_s.ToString("F1")+" ppm.s" : "Gas: no fresh data");
-        GUI.Label(new Rect(28,220,490,24),fresh&&status.gas_alert?"GAS ALARM: returning along the visited route":"Demo thresholds only | temperature/gas are simulated");
+        GUI.Label(new Rect(28,220,490,24),fresh&&status.gas_alert?"GAS ALARM: returning along the visited route":"Gauge scale: 0-100 bar | synthetic temperature/gas");
         if(heatPreview)GUI.DrawTexture(new Rect(412,147,120,90),heatPreview,ScaleMode.ScaleToFit);
     }
 }

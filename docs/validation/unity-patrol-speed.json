@@ -1,0 +1,9 @@
+{
+  "previous_cruise_mps": 0.85,
+  "configured_cruise_mps": 1.7,
+  "command_peak_mps": 1.6999999514208557,
+  "measured_peak_mps": 1.7000038623809814,
+  "odom_samples": 142,
+  "cmd_publishers": 1,
+  "passed": true
+}

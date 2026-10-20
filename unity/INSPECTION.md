@@ -23,9 +23,10 @@ docker compose -f unity/compose.yaml --profile inspection down
 ## 동작
 
 1. ROS에서 `/odom`을 보고 복도·경사로·공장 경유점을 추종한다. 가상 온도·가스 센서가 신선하지 않으면 정지한다.
-2. `Inspect_Gauges`에서 멈추고 게이지 방향으로 회전한 뒤 12초간 점검한다.
-3. Unity RGB 영상(640×480)에서 기존 `gauge_ocr.reader`가 패널·원판·빨간 바늘을 검출하고 각도를 0~10bar로 변환한다. 시연 게이지 정답은 6.2bar다. 값은 중앙값으로 묶으며 정답을 판독 노드에 주입하지 않는다. 판독에 실패하면 정상값을 만들어 내지 않고 점검 실패 상태로 정지한다.
-4. 같은 카메라의 시야에서 표면 충돌 형상에 Raycast해 합성 온도 맵(80×60, `32FC1`, 단위 °C)을 만든다. 주변은 22°C, 지정 설비는 95°C다. ROS에서 유효 픽셀 최댓값을 계산하고 80°C 이상이면 과열 경보를 발행한다. 과열은 이 데모에서 기록·표시하며, 가스 경보가 긴급 복귀를 담당한다.
+   순항 속도는 `config/inspection.json`의 `cruise_speed_mps`로 설정한다. 현재 1.7m/s로 기존 0.85m/s의 2배다. 목표점 접근 시 감속하며 점검 시간·가스 적분 시간은 그대로 시뮬레이션 시간을 따른다. Unity 점검 씬의 이동 속도 상한은 2m/s다.
+2. `Inspect_Gauges`에서 멈추고 원본 설비 방향으로 회전한 뒤 15초간 점검한다. 센서 카메라는 계기판 높이를 향하고 화각을 28°로 줄여 확대한다.
+3. Unity RGB 영상(640×480)에서 `native_gauge_reader.py`가 기존 `fac_gastank_1` 설비의 원판 3개와 검은 바늘을 검출한다. 원본 `Pressure_01.png`에 표시된 0~100bar 눈금으로 환산한다. G1/G2/G3는 영상 왼쪽부터 부여하고 게이지별 중앙값을 계산한다. 3개 모두 유효해야 점검에 성공한다. 바늘 각도나 정답값을 판독 노드에 주입하지 않으며, 실패하면 임의의 값을 만들지 않고 정지한다. 단일 `/inspection/gauge` 호환 토픽은 3개 중 최댓값이다.
+4. 같은 카메라의 시야에서 표면 충돌 형상에 Raycast해 합성 온도 맵(80×60, `32FC1`, 단위 °C)을 만든다. 주변은 22°C, 원본 계기판이 달린 지정 설비는 95°C다. ROS에서 유효 픽셀 최댓값을 계산하고 80°C 이상이면 과열 경보를 발행한다. 과열은 이 데모에서 기록·표시하며, 가스 경보가 긴급 복귀를 담당한다.
 5. 가스 누출원과 로봇 사이 수평 거리에 따른 가우시안 농도장을 Unity에서 샘플링한다. ROS에서 Unity 시뮬레이션 시간을 이용해 농도를 적분해 `ppm·s`를 계산한다. 시뮬레이션 일시정지 시간은 누적하지 않고, 센서 공백은 임의로 보간하지 않는다.
 6. 50ppm 또는 200ppm·s 이상이면 경보를 기억하고 2초 정지한 뒤, 이미 통과한 경유점을 역순으로 따라 시작점에 복귀한다. 농도가 낮아져도 복귀를 취소하지 않는다. 홈 도착 후 정지하며 Play를 새로 시작하면 새 임무로 초기화한다.
 
@@ -38,7 +39,8 @@ Unity 화면에 ROS에서 받은 판독값, 온도, 농도, 누적 노출량, �
 | `/camera/image` | Unity → ROS, 실제 렌더링 RGB |
 | `/thermal/image` | Unity → ROS, 합성 표면 온도 `32FC1` |
 | `/gas/concentration` | Unity → ROS, 가상 농도 Float32(ppm) |
-| `/inspection/gauge` | ROS 판독값 Float32(bar) |
+| `/inspection/gauge` | ROS 판독값 중 최댓값 Float32(bar) |
+| `/inspection/gauges` | ROS G1/G2/G3 각도·값·신뢰도 JSON String |
 | `/inspection/gauge_debug` | ROS 원판·바늘 검출 결과 영상 |
 | `/inspection/temperature_c` | ROS 최댓값 온도 Float32(°C) |
 | `/inspection/thermal_alert` | ROS 과열 Bool |
@@ -49,7 +51,7 @@ Unity 화면에 ROS에서 받은 판독값, 온도, 농도, 누적 노출량, �
 
 - `Scripts/UnityPlantInspection.cs`: 센서 샘플링·열화상 표시·ROS 결과 표시.
 - `Scripts/SimulatedHeatSurface.cs`: 설비 표면에 지정하는 가상 온도.
-- `tools/inspection_ros.py`: 기존 게이지 판독 함수 재사용, 온도 처리, 가스 노출·경보 계산.
+- `tools/inspection_ros.py`: 원본 계기판 3개 판독, 온도 처리, 가스 노출·경보 계산. 기존 판독 모듈의 정면화·눈금 환산 함수를 재사용한다.
 - `tools/inspection_patrol.py`: 단일 이동 명령 발행자. 정차·정렬·점검·역경로 복귀.
 - `config/inspection.json`: 경보 기준과 데이터 유효 시간. 변경 후 `inspection` 서비스를 재시작한다.
 - `config/inspection_route.json`: Unity 시작 원점 기준 ROS 경로. 게이지 정차 자세와 점검 시간 포함.
@@ -72,6 +74,12 @@ docker compose -f unity/compose.yaml exec inspection bash -lc \
 
 온도·가스는 지정한 시나리오에서 생성한 합성 센서이며 열전달·유체 확산이나 실제 센서 보정은 구현하지 않는다. ppm과 경보값은 시연용 설정으로 가스 종류별 산업안전 기준을 나타내지 않는다. 다리 움직임은 기존 애니메이션이며 관절 토크 기반 보행이 아니다. 홈 복귀는 이미 통과한 고정 경로를 재사용하며 새 장애물을 우회하는 SLAM/Nav2 경로 계획은 포함하지 않는다.
 
-## 이번 실행에서 확인한 결과
+## 원본 계기판으로 변경한 결과
+
+추가했던 큰 게이지판과 온도 상자를 씬에서 제거했다. **Doosan → ROS 2 → Use Original Equipment Gauges**로 기존 점검 씬에 원본 계기판 설정을 적용할 수 있다. 원본 프리팹·텍스처 파일은 유지하며 씬에서 바늘 메시가 원판에 가려지지 않도록 미세하게 앞으로 배치하고 양면 재질을 사용한다. 원본 눈금 텍스처는 씬 전용 사본에서 전체 해상도로 표시한다.
+
+실제 ROS 순찰에서 정차·정면 조준·원본 3개 판독·95°C 설비 감지·이동 명령 발행자 1개를 확인했다. 결과는 `docs/validation/unity-native-gauges.json`, 카메라 영상은 `docs/captures/unity-native-gauges.jpg`다. `tools/test_native_gauges.py`는 검은 바늘 각도·0~100bar 환산, 미검출 및 부분 검출 처리를 검사한다. 판독값은 시뮬레이션 영상 기반 추정이며 실제 계측기로 보정한 정확도를 의미하지 않는다.
+
+## 이전 단일 게이지 시연의 검증 기록
 
 실제 Unity 렌더링 영상에서 게이지 약 6.22bar(정답 6.2bar), 합성 열화상 95°C, 최초 가스 경보 약 52.61ppm을 확인했다. 경보 후 역경로로 복귀해 시작점과 약 0.019m 거리에서 정지했다. 관측 전용 통합 검사 9개와 노출 계산 검사 5개가 통과했다. 결과는 `docs/validation/unity-inspection*.json`, 영상은 `docs/captures/unity-inspection-*.jpg`에 있다. 실행 중 재생 재시작과 짧은 센서 유실에 따른 정지·재개도 로그에 남아 있다.
