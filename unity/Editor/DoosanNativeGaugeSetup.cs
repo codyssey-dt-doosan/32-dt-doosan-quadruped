@@ -54,7 +54,7 @@ public static class DoosanNativeGaugeSetup
         // Retain the already navigable stop in front of this native machine; turn toward its face.
         var inverse=Quaternion.Inverse(Quaternion.Euler(0,bridge.originYawDegrees,0));
         var stop=bridge.originUnity+Quaternion.Euler(0,bridge.originYawDegrees,0)*Doosan.Ros2.RosCoordinates.ToUnity(new Vector3(point.x,point.y,0));
-        var direction=Doosan.Ros2.RosCoordinates.ToRos(inverse*(center-stop));point.yaw=Mathf.Atan2(direction.y,direction.x);point.dwell_s=15;
+        var direction=Doosan.Ros2.RosCoordinates.ToRos(inverse*(center-stop));point.yaw=Mathf.Atan2(direction.y,direction.x);point.dwell_s=5;
         File.WriteAllText(source,JsonUtility.ToJson(route,true));
         var probe=new Probe{target=center,stop=stop,heading=point.yaw,gauges=gauges.Select(g=>new Gauge{name=g.name,center=g.bounds.center,size=g.bounds.size}).ToArray()};
         File.WriteAllText(Path.Combine(Application.dataPath,"../Logs/OriginalGauges.json"),JsonUtility.ToJson(probe,true));

@@ -29,7 +29,7 @@ public static class DoosanInspectionSceneSetup
         var source=JsonUtility.FromJson<DoosanRosSceneSetup.Route>(File.ReadAllText("Assets/DoosanReference/ros_route.json"));
         foreach(var p in source.waypoints){
             var point=new InspectionPoint{name=p.name,x=p.x,y=p.y,dwell_s=p.dwell_s};
-            if(p.name=="Inspect_Gauges"){point.inspection=true;point.yaw=Mathf.PI/2;point.dwell_s=12;}
+            if(p.name=="Inspect_Gauges"){point.inspection=true;point.yaw=Mathf.PI/2;point.dwell_s=5;}
             points.Add(point);
         }
         File.WriteAllText("Assets/DoosanReference/inspection_route.json",JsonUtility.ToJson(new InspectionRoute{frame_id="odom",waypoints=points.ToArray()},true));
