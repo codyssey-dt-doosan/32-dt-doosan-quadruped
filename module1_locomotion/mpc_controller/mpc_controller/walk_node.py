@@ -144,7 +144,7 @@ class WalkNode(Node):
         self.history = StepHistory()
         self.anchor_on = bool(self.p["step_anchor"]) and self.p["contact_source"] == "sensor"
         self.land_tgt = None  # 발별 마지막 스윙 착지 목표(G, 몸체 원점 기준, 매 틱 이동) — 착지 높이 오차 계측
-        self.land_err = []  # 센서 착지 순간 (실제 − 목표)·n m
+        self.land_err = deque(maxlen=2000)  # 센서 착지 순간 (실제 − 목표)·n m
         self.anc = np.full(4, np.nan)  # 직전 틱 기록 기준점 높이(덤프용)
         self.q = self.qd = None
         self.t0 = self.joint_stamp = self.imu_stamp = self.last_imu = self.cmd_stamp = None
@@ -170,7 +170,7 @@ class WalkNode(Node):
         self.j_wall = None
         self.jlat_all = []  # status 주기마다 비움
         self.h_prev = self.h_tgt_prev = None
-        self.td = []  # 센서 착지 지연 s(계측 전용 — walk.launch contact_sensors:=true)
+        self.td = deque(maxlen=2000)  # 센서 착지 지연 s(계측 전용 — walk.launch contact_sensors:=true)
         self.prev_touch = np.zeros(4, bool)
         self.pubs = [self.create_publisher(Float64, ros_force_topic(j), 10) for j in JOINTS]
         self.create_subscription(JointState, "/joint_states", self._joint_cb, 1)  # 최신만: 깊이 10이면 MPC 풀이 동안 쌓인 1 kHz 메시지를 하나씩 처리해 스윙 PD가 최대 10 ms 낡은 상태로 돌고 진동(hjump 실측)
@@ -399,6 +399,8 @@ class WalkNode(Node):
         except Exception as e:
             self.get_logger().warning(f"MPC 경로 예외: {e}", throttle_duration_sec=1.0)
         if f is None:
+            # 실패 해를 이어 써야 QP 연속 실패가 50 ms hold로 이어진다(이전엔 f_prev가 실패를 덮음)
+            self.f_prev = None
             self.stats["fail"] += 1
             self.mpc_fail_since = self.mpc_fail_since or now
         else:

@@ -11,6 +11,7 @@
 import argparse
 import csv
 import math
+import os
 import re
 import sys
 import tempfile
@@ -235,48 +236,56 @@ def main() -> int:
         csv.writer(tmp).writerows(window_rows(raw, s, d))
         tmp.close()
         replay_path = tmp.name
-    if a.cmd:
-        v, w = a.cmd[0], a.cmd[1]
-        dur = a.cmd[2] if len(a.cmd) > 2 else 15.0
-        if v < 0 and -v * dur > 2.0:
-            print(f"경고: 후진 {-v * dur:.1f} m — corridor 스폰에서 서쪽 벽까지 약 2.2 m라 벽에 닿는다(후진은 8 s 권장)")
-        threading.Thread(target=_publish, args=(v, w, (dur + 1.0) / a.rtf), daemon=True).start()
-    elif a.replay:
-        dur = (a.replay_window[1] if a.replay_window else float(list(csv.reader(open(replay_path)))[-1][0])) + 2.0
-        threading.Thread(target=_replay, args=(replay_path, start_sim), daemon=True).start()
-    else:
-        dur = 15.0
-    rows = parse_rows(tm.capture(a.world, dur / a.rtf))
-    if len(rows) < 10:
-        print(f"포즈 {len(rows)}건 — 시뮬·GZ_IP 확인")
-        return 1
-    st = log_stats(a.log)
-    fell = any(q[3] > 45.0 for q in rows)
-    ok = st.get("mode") == "run" and st.get("hold", 1) == 0 and st.get("fail", 99) <= MPC_WARMUP_FAILS and st.get("sat", 99) <= SAT_MAX
-    ok &= st.get("qp_ms", 9) < 5.0 and st.get("qp_p99", 99) < 10.0 and not fell
-    out = f"n={len(rows)} fell={fell} " + " ".join(f"{k}={v}" for k, v in st.items())
-    if a.cmd:
-        m = velocity_track(rows, v, w, a.after)
-        out += " " + " ".join(f"{k}={val:.3f}" for k, val in m.items())
-        if a.slope:
-            s = slope_segments(rows, *a.slope)
-            out += f" slope={s}"
-            ok &= s["completed"] and s["y_drift"] is not None and s["y_drift"] < 0.3
-            ok &= all(seg is None or abs(seg["pitch_err"]) < 5.0 for seg in (s["up"], s["down"]))
-            min_up = 0.15 if a.slope[0] >= 20 else 0.05  # 기준 3은 20°에서만 속도 하한
-            ok &= s["up"] is not None and s["up"]["v"] >= min_up
-            ok &= s["down"] is None or (s["down"]["tilt_max"] < 20.0 and s["down"]["v_max"] <= 0.4)
+    try:
+        if a.cmd:
+            v, w = a.cmd[0], a.cmd[1]
+            dur = a.cmd[2] if len(a.cmd) > 2 else 15.0
+            if v < 0 and -v * dur > 2.0:
+                print(f"경고: 후진 {-v * dur:.1f} m — corridor 스폰에서 서쪽 벽까지 약 2.2 m라 벽에 닿는다(후진은 8 s 권장)")
+            threading.Thread(target=_publish, args=(v, w, (dur + 1.0) / a.rtf), daemon=True).start()
+        elif a.replay:
+            dur = (a.replay_window[1] if a.replay_window else float(list(csv.reader(open(replay_path)))[-1][0])) + 2.0
+            threading.Thread(target=_replay, args=(replay_path, start_sim), daemon=True).start()
         else:
-            ok &= m["err_v"] < 0.10 and m["err_w"] < 0.10 and m["tilt_max"] < 3.0 and m["z_std"] < 0.01
-    elif a.replay:
-        while start_sim[0] is None:
-            time.sleep(0.1)
-        e = replay_errors(rows, replay_path, start_sim[0])
-        out += " " + " ".join(f"{k}={val:.3f}" for k, val in e.items() if k != "n_win") + f" n_win={e['n_win']}"
-        ok &= e["n_win"] > 0 and e["rms_v"] < 0.05 and e["rms_w"] < 0.10 and e["end_err"] < 0.10 * e["path_len"]
-    print(out)
-    print("PASS" if ok else "FAIL")
-    return 0 if ok else 1
+            dur = 15.0
+        rows = parse_rows(tm.capture(a.world, dur / a.rtf))
+        if len(rows) < 10:
+            print(f"포즈 {len(rows)}건 — 시뮬·GZ_IP 확인")
+            return 1
+        st = log_stats(a.log)
+        fell = any(q[3] > 45.0 for q in rows)
+        ok = st.get("mode") == "run" and st.get("hold", 1) == 0 and st.get("fail", 99) <= MPC_WARMUP_FAILS and st.get("sat", 99) <= SAT_MAX
+        ok &= st.get("qp_ms", 9) < 5.0 and st.get("qp_p99", 99) < 10.0 and not fell
+        out = f"n={len(rows)} fell={fell} " + " ".join(f"{k}={v}" for k, v in st.items())
+        if a.cmd:
+            m = velocity_track(rows, v, w, a.after)
+            out += " " + " ".join(f"{k}={val:.3f}" for k, val in m.items())
+            if a.slope:
+                s = slope_segments(rows, *a.slope)
+                out += f" slope={s}"
+                ok &= s["completed"] and s["y_drift"] is not None and s["y_drift"] < 0.3
+                ok &= all(seg is None or abs(seg["pitch_err"]) < 5.0 for seg in (s["up"], s["down"]))
+                min_up = 0.15 if a.slope[0] >= 20 else 0.05  # 기준 3은 20°에서만 속도 하한
+                ok &= s["up"] is not None and s["up"]["v"] >= min_up
+                ok &= s["down"] is None or (s["down"]["tilt_max"] < 20.0 and s["down"]["v_max"] <= 0.4)
+            else:
+                ok &= m["err_v"] < 0.10 and m["err_w"] < 0.10 and m["tilt_max"] < 3.0 and m["z_std"] < 0.01
+        elif a.replay:
+            t_wait = time.monotonic()
+            while start_sim[0] is None:
+                if time.monotonic() - t_wait > 30.0:
+                    print("재생 시작 sim 시각을 30 s 안에 못 받음 — /clock·rclpy 확인", file=sys.stderr)
+                    return 1
+                time.sleep(0.1)
+            e = replay_errors(rows, replay_path, start_sim[0])
+            out += " " + " ".join(f"{k}={val:.3f}" for k, val in e.items() if k != "n_win") + f" n_win={e['n_win']}"
+            ok &= e["n_win"] > 0 and e["rms_v"] < 0.05 and e["rms_w"] < 0.10 and e["end_err"] < 0.10 * e["path_len"]
+        print(out)
+        print("PASS" if ok else "FAIL")
+        return 0 if ok else 1
+    finally:
+        if a.replay and a.replay_window:
+            os.unlink(replay_path)
 
 
 if __name__ == "__main__":
