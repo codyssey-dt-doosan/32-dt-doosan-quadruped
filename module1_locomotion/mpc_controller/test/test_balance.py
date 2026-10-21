@@ -330,3 +330,34 @@ def test_ik_clamped_respects_knee_margin():
     assert q_marg[2] == pytest.approx(-0.7, abs=1e-6)
     near = [HIP["FL"][0], HIP["FL"][1] + SIDE["FL"] * HIP_Y, -0.30]
     assert ik_clamped("FL", near, reach(0.7)) == ik_clamped("FL", near)
+
+
+def _old_joint_tau(mode, t, stance, q_sw, tau_ff, q, qd, kp_sw=120.0, kd_sw=2.0, kd_st=1.0):
+    """⑤-3 이전 walk_node._joint_cb 토크 분기(대조 기준)."""
+    from mpc_controller.balance_node import TAU_MAX
+
+    lam = blend(t) if mode == "run" else 0.0
+    if lam < 1.0 or mode != "run":
+        kp, kd = gains(lam)
+        q_des = q_startup(t) if mode == "run" else np.array(Q_NOM * 4)
+        return joint_torque(lam, kp, kd, q_des, q, qd, tau_ff)
+    tau = np.empty(12)
+    for i in range(4):
+        s = slice(3 * i, 3 * i + 3)
+        tau[s] = tau_ff[s] - kd_st * qd[s] if stance[i] else kp_sw * (q_sw[s] - q[s]) - kd_sw * qd[s]
+    return np.clip(tau, -TAU_MAX, TAU_MAX)
+
+
+@pytest.mark.parametrize("mode,t", [("run", 1.0), ("run", 2.5), ("run", 4.0), ("hold", 4.0)])
+def test_joint_command_matches_old_torque(mode, t):
+    """⑤-3: 서보 명령(joint_command → pack → unpack → servo_torque)이 옛 _joint_cb 토크와 수치 동일."""
+    from mpc_controller.joint_servo import pack_cmd, servo_torque, unpack_cmd
+    from mpc_controller.walk_node import joint_command
+
+    rng = np.random.default_rng(0)
+    q, qd = np.array(Q_NOM * 4) + rng.normal(0, 0.1, 12), rng.normal(0, 1.0, 12)
+    q_sw, tau_ff = np.array(Q_NOM * 4) + rng.normal(0, 0.2, 12), rng.normal(0, 8.0, 12)
+    stance = np.array([True, False, False, True])
+    lam = blend(t) if mode == "run" else 0.0
+    cmd = unpack_cmd(pack_cmd(t, *joint_command(mode, lam, t, stance, q_sw, tau_ff, 120.0, 2.0, 1.0)))
+    assert np.allclose(servo_torque(cmd, q, qd), _old_joint_tau(mode, t, stance, q_sw, tau_ff, q, qd))
