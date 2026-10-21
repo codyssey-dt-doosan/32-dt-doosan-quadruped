@@ -245,6 +245,7 @@ class WalkNode(Node):
         self.jlat_all.append(lat)
         if self.t0 is None:
             self.t0 = now
+        self._check_mode()
 
     # ---- 200 Hz: 추정 → gait → (50 Hz) MPC → τ_ff ----
     def _imu_cb(self, msg: Imu) -> None:
