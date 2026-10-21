@@ -361,3 +361,15 @@ def test_joint_command_matches_old_torque(mode, t):
     lam = blend(t) if mode == "run" else 0.0
     cmd = unpack_cmd(pack_cmd(t, *joint_command(mode, lam, t, stance, q_sw, tau_ff, 120.0, 2.0, 1.0)))
     assert np.allclose(servo_torque(cmd, q, qd), _old_joint_tau(mode, t, stance, q_sw, tau_ff, q, qd))
+
+
+def test_servo_stats_parses_status_lines():
+    from walk_metrics import servo_stats
+
+    def line(p99, stale):
+        return f"status mode=run qp_ms=1.0/2.0 fail=0 sat=0 servo_gap_ms=1.0/{p99}/9.0 servo_stale={stale} servo_reject=0 servo_lat_ms=0.4"
+
+    lines = [line(50.0, 0)] * 3 + [line(1.2, 0), line(2.6, 0), line(1.9, 1)]
+    st = servo_stats(lines)
+    assert st == {"servo_gap_p99_max": 2.6, "servo_stale": 1, "servo_reject": 0}
+    assert servo_stats(["status mode=run qp_ms=1.0/2.0 fail=0 sat=0"]) == {}
