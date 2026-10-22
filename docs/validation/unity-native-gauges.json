@@ -1,0 +1,19 @@
+{
+  "checks": {
+    "inspection_stop": true,
+    "facing_native_equipment": true,
+    "native_equipment_temperature": true,
+    "all_three_original_gauges_read": true,
+    "single_cmd_vel_source": true
+  },
+  "values": {
+    "inspection_yaw_rad": -1.4894142428493677,
+    "temperature_c": 95.0,
+    "gauges_bar": [
+      3.5185185185185186,
+      3.148148148148148,
+      1.6666666666666667
+    ]
+  },
+  "passed": true
+}

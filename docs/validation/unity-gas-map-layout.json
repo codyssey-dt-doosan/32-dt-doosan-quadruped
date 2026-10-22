@@ -1,0 +1,12 @@
+{
+    "source": {
+        "x": 16.189208984375,
+        "y": 1.3000003099441528,
+        "z": 1.0000038146972656
+    },
+    "alarmRadius": 1.6540374755859375,
+    "cautionRadius": 2.3662731647491455,
+    "waypoints": 16,
+    "providedTank": "Assets/object/fac_gastank_1.prefab",
+    "providedEffect": "Assets/effect/gas_spurt_1.prefab"
+}

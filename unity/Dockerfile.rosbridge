@@ -1,0 +1,6 @@
+FROM ros:jazzy-ros-base-noble
+ENV DEBIAN_FRONTEND=noninteractive ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-jazzy-rosbridge-suite ros-jazzy-sensor-msgs-py ros-jazzy-tf2-ros \
+    python3-numpy python3-opencv && rm -rf /var/lib/apt/lists/*
+CMD ["bash", "-lc", "source /opt/ros/jazzy/setup.bash && exec ros2 launch rosbridge_server rosbridge_websocket_launch.xml address:=0.0.0.0 port:=9090"]

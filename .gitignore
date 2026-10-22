@@ -36,10 +36,15 @@ Thumbs.db
 *.mcap
 *.log
 docs/captures/*.png
-!docs/captures/.gitkeep
+docs/captures/*.jpg
+!docs/captures/unity-gas-map.jpg
+!docs/captures/unity-native-gauges.jpg
 
 # Gazebo
 .gazebo/
 .ignition/
 .gz/
 *.cache
+
+# Temporary reference-video frames and staging scripts
+/.runtime/unity-reference/

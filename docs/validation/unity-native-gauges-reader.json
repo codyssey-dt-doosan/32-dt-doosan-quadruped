@@ -1,0 +1,27 @@
+{
+  "input": "actual ROS camera frame",
+  "gauges": [
+    {
+      "id": "G1",
+      "angle_deg": 231.69300523608604,
+      "bar": 2.4788908281800137,
+      "confidence": 0.9806949806949805,
+      "valid": true
+    },
+    {
+      "id": "G2",
+      "angle_deg": 234.1042011071839,
+      "bar": 3.371926335994041,
+      "confidence": 0.9613899613899612,
+      "valid": true
+    },
+    {
+      "id": "G3",
+      "angle_deg": 229.20053786511852,
+      "bar": 1.555754764858711,
+      "confidence": 0.9420849420849419,
+      "valid": true
+    }
+  ],
+  "all_valid": true
+}

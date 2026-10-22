@@ -1,0 +1,144 @@
+{
+  "phase": "home_safe:gas_alarm_latched",
+  "index": 8,
+  "gas_latched": true,
+  "station": {
+    "temperature_c": 95.0,
+    "gauge_bar": 6.222222222222222,
+    "gauge_sim_s": 95.159261848
+  },
+  "events": [
+    {
+      "phase": "hold:sensor_data_missing",
+      "sim_s": 0.019999992
+    },
+    {
+      "phase": "goto:01_Ramp_Approach",
+      "sim_s": 0.341036571
+    },
+    {
+      "phase": "goto:02_Ramp_Top",
+      "sim_s": 9.997993494
+    },
+    {
+      "phase": "goto:03_Corridor_Clear",
+      "sim_s": 17.410471492
+    },
+    {
+      "phase": "hold:sensor_data_missing",
+      "sim_s": 43.443418494
+    },
+    {
+      "phase": "goto:03_Corridor_Clear",
+      "sim_s": 43.667029039
+    },
+    {
+      "phase": "hold:sensor_data_missing",
+      "sim_s": 43.667029039
+    },
+    {
+      "phase": "goto:03_Corridor_Clear",
+      "sim_s": 43.912548455
+    },
+    {
+      "phase": "hold:sensor_data_missing",
+      "sim_s": 47.278744869
+    },
+    {
+      "phase": "goto:03_Corridor_Clear",
+      "sim_s": 47.4339357
+    },
+    {
+      "phase": "goto:04_Factory_Entry",
+      "sim_s": 53.12171916
+    },
+    {
+      "phase": "goto:Transit_0_0",
+      "sim_s": 60.462563917
+    },
+    {
+      "phase": "goto:North_Aisle",
+      "sim_s": 66.455975304
+    },
+    {
+      "phase": "goto:Inspect_Gauges",
+      "sim_s": 75.041174681
+    },
+    {
+      "phase": "align:Inspect_Gauges",
+      "sim_s": 80.082757426
+    },
+    {
+      "phase": "inspect:Inspect_Gauges",
+      "sim_s": 83.131553387
+    },
+    {
+      "phase": "hold:sensor_data_missing",
+      "sim_s": 87.901845514
+    },
+    {
+      "phase": "inspect:Inspect_Gauges",
+      "sim_s": 88.031676133
+    },
+    {
+      "phase": "goto:Machine_East",
+      "sim_s": 95.159261848
+    },
+    {
+      "phase": "goto:East_Aisle",
+      "sim_s": 109.08320231
+    },
+    {
+      "phase": "alarm:gas_stop_then_return",
+      "sim_s": 115.768045642
+    },
+    {
+      "phase": "return:Machine_East",
+      "sim_s": 117.794892183
+    },
+    {
+      "phase": "return:Inspect_Gauges",
+      "sim_s": 126.3623106
+    },
+    {
+      "phase": "hold:sensor_data_missing",
+      "sim_s": 136.647996478
+    },
+    {
+      "phase": "return:Inspect_Gauges",
+      "sim_s": 136.85637777
+    },
+    {
+      "phase": "return:North_Aisle",
+      "sim_s": 144.86780919
+    },
+    {
+      "phase": "return:Transit_0_0",
+      "sim_s": 148.760315228
+    },
+    {
+      "phase": "return:04_Factory_Entry",
+      "sim_s": 156.132827813
+    },
+    {
+      "phase": "return:03_Corridor_Clear",
+      "sim_s": 163.182259481
+    },
+    {
+      "phase": "return:02_Ramp_Top",
+      "sim_s": 170.696260147
+    },
+    {
+      "phase": "return:01_Ramp_Approach",
+      "sim_s": 200.324373356
+    },
+    {
+      "phase": "return:Home",
+      "sim_s": 207.700579854
+    },
+    {
+      "phase": "home_safe:gas_alarm_latched",
+      "sim_s": 217.698721145
+    }
+  ]
+}

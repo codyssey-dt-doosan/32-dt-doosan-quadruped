@@ -1,0 +1,10 @@
+{
+  "cruise_speed_mps": 1.7,
+  "gauge_source": "native_triplet",
+  "gauge_alarm_bar": 80.0,
+  "temperature_alarm_c": 80.0,
+  "gas_alarm_ppm": 50.0,
+  "exposure_alarm_ppm_s": 200.0,
+  "fresh_seconds": 2.0,
+  "note": "Synthetic demo thresholds; gas species and occupational exposure limits are not modeled."
+}
