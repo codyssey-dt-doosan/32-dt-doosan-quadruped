@@ -84,4 +84,4 @@ docker compose -f unity/compose.yaml exec inspection bash -lc \
 
 ## 이전 단일 게이지 시연의 검증 기록
 
-실제 Unity 렌더링 영상에서 게이지 약 6.22bar(정답 6.2bar), 합성 열화상 95°C, 최초 가스 경보 약 52.61ppm을 확인했다. 경보 후 역경로로 복귀해 시작점과 약 0.019m 거리에서 정지했다. 관측 전용 통합 검사 9개와 노출 계산 검사 5개가 통과했다. 결과는 `docs/validation/unity-inspection*.json`, 영상은 `docs/captures/unity-inspection-*.jpg`에 있다. 실행 중 재생 재시작과 짧은 센서 유실에 따른 정지·재개도 로그에 남아 있다.
+실제 Unity 렌더링 영상에서 게이지 약 6.22bar(정답 6.2bar), 합성 열화상 95°C, 최초 가스 경보 약 52.61ppm을 확인했다. 경보 후 역경로로 복귀해 시작점과 약 0.019m 거리에서 정지했다. 관측 전용 통합 검사 9개와 노출 계산 검사 5개가 통과했다. 결과는 `docs/validation/unity-inspection*.json`에 보존한다. 이전 단일 게이지 시연의 캡처는 정리했으며, 현재 원본 계기판 판독 이미지는 `docs/captures/unity-native-gauges.jpg`를 참고한다. 실행 중 재생 재시작과 짧은 센서 유실에 따른 정지·재개도 로그에 남아 있다.

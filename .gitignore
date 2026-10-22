@@ -36,7 +36,9 @@ Thumbs.db
 *.mcap
 *.log
 docs/captures/*.png
-!docs/captures/.gitkeep
+docs/captures/*.jpg
+!docs/captures/unity-gas-map.jpg
+!docs/captures/unity-native-gauges.jpg
 
 # Gazebo
 .gazebo/
