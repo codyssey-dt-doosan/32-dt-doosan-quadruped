@@ -18,9 +18,17 @@ public class DoosanReferencePatrol : MonoBehaviour
     public bool automatic = true;
     [Tooltip("ROS mode ignores Unity waypoints and keyboard movement. Set by UnityRosBridge.")]
     public bool rosControl;
+    [Tooltip("Gazebo mirror mode applies external /odom pose directly and disables CharacterController motion.")]
+    public bool gazeboMirror;
     float rosLinear, rosAngular;
+    Vector3 mirrorPos;
+    Quaternion mirrorRot = Quaternion.identity;
+    float mirrorSpeed;
+    bool hasMirrorPose;
     public void SetRosCommand(float linear, float angular){rosLinear=linear;rosAngular=angular;}
     public void ClearRosCommand(){rosLinear=rosAngular=0;}
+    public void SetMirrorPose(Vector3 pos, Quaternion rot, float speedMag){mirrorPos=pos;mirrorRot=rot;mirrorSpeed=speedMag;hasMirrorPose=true;}
+    public void ClearMirrorPose(){hasMirrorPose=false;mirrorSpeed=0;}
     public bool paused;
     public int routeIndex;
     CharacterController body;
@@ -43,6 +51,17 @@ public class DoosanReferencePatrol : MonoBehaviour
             if(kb.tabKey.wasPressedThisFrame&&!rosControl)automatic=!automatic;
             if(kb.vKey.wasPressedThisFrame&&corridorCamera)corridorCamera.enabled=!corridorCamera.enabled;
         }
+        if(gazeboMirror){
+            if(body&&body.enabled)body.enabled=false;
+            if(hasMirrorPose){
+                float k=1f-Mathf.Exp(-25f*Time.deltaTime);
+                transform.position=Vector3.Lerp(transform.position,mirrorPos,k);
+                transform.rotation=Quaternion.Slerp(transform.rotation,mirrorRot,k);
+            }
+            if(robotAnimator)robotAnimator.speed=mirrorSpeed>0.03f?Mathf.Clamp(mirrorSpeed*2.2f,0.35f,1.8f):0f;
+            return;
+        }
+        if(body&&!body.enabled)body.enabled=true;
         Vector3 direction=Vector3.zero;
         float movementSpeed=speed;
         if(!paused){
@@ -92,9 +111,9 @@ public class DoosanReferencePatrol : MonoBehaviour
     {
         GUI.color=Color.white;
         GUI.Box(new Rect(16,14,450,70),GUIContent.none);
-        GUI.Label(new Rect(28,22,430,24),"PLANT PATROL  |  "+(rosControl?"ROS 2":automatic?"AUTO":"MANUAL")+(paused?"  PAUSED":""));
+        GUI.Label(new Rect(28,22,430,24),"PLANT PATROL  |  "+(gazeboMirror?"GAZEBO MPC MIRROR":rosControl?"ROS 2":automatic?"AUTO":"MANUAL")+(paused?"  PAUSED":""));
         var bridge=GetComponent<UnityRosBridge>();
-        GUI.Label(new Rect(28,46,430,24),rosControl&&bridge?bridge.ConnectionStatus+" | "+(bridge.CommandFresh?"cmd_vel active":"waiting for cmd_vel"):"Space: pause   Tab: auto/manual   WASD: move   V: inset");
+        GUI.Label(new Rect(28,46,430,24),gazeboMirror&&bridge?bridge.ConnectionStatus+" | "+(hasMirrorPose?"mirroring Gazebo /odom":"waiting for Gazebo /odom"):rosControl&&bridge?bridge.ConnectionStatus+" | "+(bridge.CommandFresh?"cmd_vel active":"waiting for cmd_vel"):"Space: pause   Tab: auto/manual   WASD: move   V: inset");
     }
     void OnDrawGizmosSelected(){if(route==null)return;Gizmos.color=Color.cyan;for(int i=0;i<route.Length;i++)if(route[i]){Gizmos.DrawSphere(route[i].position,.12f);if(i>0&&route[i-1])Gizmos.DrawLine(route[i-1].position,route[i].position);}}
 }

@@ -12,6 +12,9 @@ public class UnityRosBridge : MonoBehaviour
 {
     public string serverUrl="ws://127.0.0.1:9090";
     public bool controlFromRos=true;
+    [Tooltip("Mirror external Gazebo /odom pose instead of driving CharacterController and publishing /odom.")]
+    public bool gazeboMirror=false;
+    public bool mirrorRelativeOrigin=true;
     public float commandTimeout=.5f;
     public float maxLinearSpeed=1.5f,maxAngularSpeed=2f;
     public float odometryHz=20,cameraHz=5,lidarHz=5;
@@ -38,7 +41,9 @@ public class UnityRosBridge : MonoBehaviour
     RosbridgeTransport transport;
     public event Action<string> MessageReceived;
     DoosanReferencePatrol drive;
-    Quaternion inverseOrigin;
+    Quaternion originRotation,inverseOrigin;
+    bool mirrorRefSet;
+    Vector3 mirrorRefRosPos;
     long lastCommandTicks;
     int generation;
     double nextOdom,nextCamera,nextLidar,lastOdomTime;
@@ -51,19 +56,26 @@ public class UnityRosBridge : MonoBehaviour
     void OnEnable()
     {
         if(!Application.isPlaying)return;
-        drive=GetComponent<DoosanReferencePatrol>();drive.rosControl=controlFromRos;drive.ClearRosCommand();
+        drive=GetComponent<DoosanReferencePatrol>();drive.rosControl=controlFromRos;drive.gazeboMirror=gazeboMirror;drive.ClearRosCommand();drive.ClearMirrorPose();
         if(originAtStart){originUnity=transform.position;originYawDegrees=transform.eulerAngles.y;}
-        inverseOrigin=Quaternion.Inverse(Quaternion.Euler(0,originYawDegrees,0));
+        originRotation=Quaternion.Euler(0,originYawDegrees,0);
+        inverseOrigin=Quaternion.Inverse(originRotation);
+        mirrorRefSet=false;mirrorRefRosPos=Vector3.zero;
         lastCommandTicks=0;generation=0;CommandLinear=CommandAngular=0;
         AcceptedCommands=OdometryPublished=ImagesPublished=CloudsPublished=0;
         nextOdom=nextCamera=nextLidar=Time.timeAsDouble;lastOdomTime=Time.timeAsDouble;
         lastPosition=transform.position;lastVelocity=Vector3.zero;lastYaw=transform.eulerAngles.y;
         cameraErrorReported=false;
-        var ops=new List<string>{JsonUtility.ToJson(new Operation{op="subscribe",topic="/cmd_vel",type="geometry_msgs/msg/Twist"})};
-        Register(ops,"/clock","rosgraph_msgs/msg/Clock");Register(ops,"/odom","nav_msgs/msg/Odometry");Register(ops,"/tf","tf2_msgs/msg/TFMessage");
-        if(publishImu)Register(ops,"/imu","sensor_msgs/msg/Imu");
+        var ops=new List<string>();
+        if(gazeboMirror){
+            ops.Add(JsonUtility.ToJson(new Operation{op="subscribe",topic="/odom",type="nav_msgs/msg/Odometry"}));
+        }else{
+            ops.Add(JsonUtility.ToJson(new Operation{op="subscribe",topic="/cmd_vel",type="geometry_msgs/msg/Twist"}));
+            Register(ops,"/clock","rosgraph_msgs/msg/Clock");Register(ops,"/odom","nav_msgs/msg/Odometry");Register(ops,"/tf","tf2_msgs/msg/TFMessage");
+            if(publishImu)Register(ops,"/imu","sensor_msgs/msg/Imu");
+            if(publishLidar)Register(ops,"/points","sensor_msgs/msg/PointCloud2");
+        }
         if(publishCamera){Register(ops,"/camera/image","sensor_msgs/msg/Image");Register(ops,"/camera/camera_info","sensor_msgs/msg/CameraInfo");}
-        if(publishLidar)Register(ops,"/points","sensor_msgs/msg/PointCloud2");
         if(GetComponent<UnityPlantInspection>()){
             Register(ops,"/thermal/image","sensor_msgs/msg/Image");Register(ops,"/gas/concentration","std_msgs/msg/Float32");
             ops.Add(JsonUtility.ToJson(new Operation{op="subscribe",topic="/inspection/status",type="std_msgs/msg/String"}));
@@ -83,11 +95,29 @@ public class UnityRosBridge : MonoBehaviour
     void Update()
     {
         if(transport==null)return;
-        if(generation!=transport.Generation){generation=transport.Generation;lastCommandTicks=0;CommandLinear=CommandAngular=0;}
+        if(generation!=transport.Generation){generation=transport.Generation;lastCommandTicks=0;CommandLinear=CommandAngular=0;mirrorRefSet=false;}
         while(transport.TryReceive(out var packet)){
-            if(RosbridgeTransport.Age(packet.ticks)>commandTimeout)continue;
+            if(!gazeboMirror&&RosbridgeTransport.Age(packet.ticks)>commandTimeout)continue;
             try{
                 MessageReceived?.Invoke(packet.json);
+                if(gazeboMirror){
+                    var odomEnv=JsonUtility.FromJson<OdomEnvelope>(packet.json);
+                    if(odomEnv==null||odomEnv.op!="publish"||odomEnv.topic!="/odom"||odomEnv.msg?.pose?.pose?.position==null)continue;
+                    var p=odomEnv.msg.pose.pose.position;var q=odomEnv.msg.pose.pose.orientation;
+                    var rosPos=new Vector3((float)p.x,(float)p.y,(float)p.z);
+                    if(!mirrorRefSet){mirrorRefRosPos=rosPos;mirrorRefSet=true;}
+                    var deltaRos=mirrorRelativeOrigin?(rosPos-mirrorRefRosPos):rosPos;
+                    var rosQuat=new Quaternion((float)q.x,(float)q.y,(float)q.z,(float)q.w);
+                    if(rosQuat.x==0&&rosQuat.y==0&&rosQuat.z==0&&rosQuat.w==0)rosQuat=Quaternion.identity;
+                    var worldPos=originUnity+originRotation*RosCoordinates.ToUnity(deltaRos);
+                    var worldRot=originRotation*RosCoordinates.ToUnity(rosQuat);
+                    var tw=odomEnv.msg.twist?.twist;
+                    float spd=tw?.linear!=null?Mathf.Sqrt((float)(tw.linear.x*tw.linear.x+tw.linear.y*tw.linear.y)):0f;
+                    if(tw?.angular!=null)spd+=0.35f*Mathf.Abs((float)tw.angular.z);
+                    drive.SetMirrorPose(worldPos,worldRot,spd);
+                    AcceptedCommands++;
+                    continue;
+                }
                 var envelope=JsonUtility.FromJson<CommandEnvelope>(packet.json);
                 if(envelope==null||envelope.op!="publish"||envelope.topic!="/cmd_vel"||envelope.msg?.linear==null||envelope.msg.angular==null)continue;
                 double v=envelope.msg.linear.x,w=envelope.msg.angular.z;
@@ -96,15 +126,17 @@ public class UnityRosBridge : MonoBehaviour
                 lastCommandTicks=packet.ticks;AcceptedCommands++;
             }catch(ArgumentException){/* Ignore malformed/non-command rosbridge status messages. */}
         }
-        drive.rosControl=controlFromRos;
-        if(CommandFresh&&controlFromRos)drive.SetRosCommand(CommandLinear,CommandAngular);else drive.ClearRosCommand();
+        drive.rosControl=controlFromRos;drive.gazeboMirror=gazeboMirror;
+        if(!gazeboMirror){
+            if(CommandFresh&&controlFromRos)drive.SetRosCommand(CommandLinear,CommandAngular);else drive.ClearRosCommand();
+        }
     }
     void LateUpdate()
     {
         if(!Connected)return;
         double now=Time.timeAsDouble;
-        if(now>=nextOdom){nextOdom=now+1/Math.Max(1,odometryHz);PublishMotion(now);}
-        if(publishLidar&&now>=nextLidar){nextLidar=now+1/Math.Max(.1,lidarHz);PublishCloud(now);}
+        if(!gazeboMirror&&now>=nextOdom){nextOdom=now+1/Math.Max(1,odometryHz);PublishMotion(now);}
+        if(!gazeboMirror&&publishLidar&&now>=nextLidar){nextLidar=now+1/Math.Max(.1,lidarHz);PublishCloud(now);}
         if(publishCamera&&sensorCamera&&cameraTarget&&now>=nextCamera){nextCamera=now+1/Math.Max(.1,cameraHz);PublishImage(now);}
     }
     Header Header(double now,string frame)=>new Header{stamp=RosTime.FromSeconds(now),frame_id=frame};

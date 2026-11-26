@@ -26,6 +26,7 @@ namespace Doosan.Ros2
     [Serializable] public class PointCloud2 { public Header header;public uint height,width;public PointField[] fields;public bool is_bigendian;public uint point_step=12,row_step;public string data;public bool is_dense; }
     [Serializable] public class Imu { public Header header;public QuaternionMsg orientation;public double[] orientation_covariance={.001,0,0,0,.001,0,0,0,.001};public Vector3Msg angular_velocity;public double[] angular_velocity_covariance={.001,0,0,0,.001,0,0,0,.001};public Vector3Msg linear_acceleration;public double[] linear_acceleration_covariance={.01,0,0,0,.01,0,0,0,.01}; }
     [Serializable] public class CommandEnvelope { public string op,topic;public Twist msg; }
+    [Serializable] public class OdomEnvelope { public string op,topic;public Odometry msg; }
     [Serializable] public class Operation { public string op,topic,type; }
     [Serializable] public class Float32Value { public float data; }
     [Serializable] public class StringValue { public string data; }
@@ -39,6 +40,7 @@ namespace Doosan.Ros2
         public static Vector3 ToUnity(Vector3 v)=>new Vector3(-v.y,v.z,v.x);
         // A reflection changes the sign of the quaternion's axial-vector part.
         public static Quaternion ToRos(Quaternion q)=>new Quaternion(-q.z,q.x,-q.y,q.w).normalized;
+        public static Quaternion ToUnity(Quaternion q)=>new Quaternion(q.y,-q.z,-q.x,q.w).normalized;
         public static double Yaw(Quaternion q)=>Math.Atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z));
         public static byte[] PointBytes(float[] xyz){var bytes=new byte[xyz.Length*4];Buffer.BlockCopy(xyz,0,bytes,0,bytes.Length);if(!BitConverter.IsLittleEndian)for(int i=0;i<bytes.Length;i+=4)Array.Reverse(bytes,i,4);return bytes;}
     }
