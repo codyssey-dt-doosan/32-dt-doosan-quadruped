@@ -73,8 +73,9 @@ def _launch_setup(context, *args, **kwargs):
         output="screen",
         parameters=[walk_params],
     )
+    servo = Node(package="mpc_controller", executable="joint_servo", name="joint_servo", output="screen", parameters=[{"use_sim_time": True}])
     resource_path = os.pathsep.join([legged_models, os.path.join(sim_share, "models")])
-    return [SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", resource_path), gz_sim, *gz_gui, *bridges, walk]
+    return [SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", resource_path), gz_sim, *gz_gui, *bridges, walk, servo]
 
 
 def generate_launch_description() -> LaunchDescription:

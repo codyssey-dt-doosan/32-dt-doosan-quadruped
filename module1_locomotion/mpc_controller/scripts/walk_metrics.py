@@ -6,7 +6,7 @@
   --replay F.csv    : 기록을 sim 시각에 맞춰 재발행 → 보폭 창 평균 속도 추종 RMS(명령 변화 후 0.5 s 제외)·종점 오차 (기준 2)
   --replay-window S D : --replay 파일에서 S ≤ t < S+D 구간만 잘라 재영점(t -= S) 후 재생
   --slope DEG LEN   : x 구간(오르막/평지/내리막)별 속도·pitch·최대 기울기·횡 드리프트 (기준 3~5, --cmd와 같이)
-판정 공통: hold 0, fail(첫 3틱 제외) 0, sat ≤ 50, mpc 평균 < 5 ms·p99 < 10 ms, 전도(tilt > 45°) 0.
+판정 공통: hold 0, fail(첫 3틱 제외) 0, sat ≤ 50, mpc 평균 < 5 ms·p99 < 10 ms, 전도(tilt > 45°) 0, servo_stale 0.
 """
 import argparse
 import csv
@@ -64,10 +64,21 @@ def velocity_track(rows: list, v: float, w: float, after: float) -> dict:
     }
 
 
+def servo_stats(lines: list) -> dict:
+    """walk status 줄의 joint_servo 필드 → 루프 간격 p99 최댓값(기동 3줄 제외)·끊김·거부(마지막 줄)."""
+    rows = [re.search(r"servo_gap_ms=[\d.]+/([\d.]+)/[\d.]+ servo_stale=(\d+) servo_reject=(\d+)", l) for l in lines]
+    rows = [m for m in rows if m]
+    if not rows:
+        return {}
+    tail = rows[3:] or rows
+    return {"servo_gap_p99_max": max(float(m.group(1)) for m in tail), "servo_stale": int(rows[-1].group(2)), "servo_reject": int(rows[-1].group(3))}
+
+
 def log_stats(path: str) -> dict:
     st = bm.log_stats(path)
     lines = [l for l in Path(path).read_text(encoding="utf-8", errors="ignore").splitlines() if "status mode=" in l]
     if lines:
+        st.update(servo_stats(lines))
         m = re.search(r"ik_fail=(\d+) ik_clamp=(\d+) phase=([\d.]+) active=(\d)", lines[-1])
         st.update({"ik_fail": int(m.group(1)), "ik_clamp": int(m.group(2)), "active": int(m.group(4))})
         t = re.search(r"td_ms=(\S+) scuff=(\d+) hjump=(\d+)", lines[-1])
@@ -256,6 +267,7 @@ def main() -> int:
         fell = any(q[3] > 45.0 for q in rows)
         ok = st.get("mode") == "run" and st.get("hold", 1) == 0 and st.get("fail", 99) <= MPC_WARMUP_FAILS and st.get("sat", 99) <= SAT_MAX
         ok &= st.get("qp_ms", 9) < 5.0 and st.get("qp_p99", 99) < 10.0 and not fell
+        ok &= st.get("servo_stale", 0) == 0
         out = f"n={len(rows)} fell={fell} " + " ".join(f"{k}={v}" for k, v in st.items())
         if a.cmd:
             m = velocity_track(rows, v, w, a.after)

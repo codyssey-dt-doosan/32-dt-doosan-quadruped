@@ -121,10 +121,11 @@ ros2 launch mpc_controller walk.launch.py slope_deg:=15       # 스폰 앞 2 m �
 ros2 launch mpc_controller legged.launch.py slope_deg:=15     # 대조군: 개루프 gait_node 같은 경사
 ```
 
-- 구조: `srb_mpc.py`(SRB 동역학·이산화·condensing·QP) · `gait.py`(위상·스케줄·Raibert 착지·스윙 궤적) · `body_estimate.FootMemory`(trot 2발 접촉에서도 최근 착지점 4개로 지형 평면) · `walk_node.py`(200 Hz 추정·50 Hz MPC·1 kHz 관절 토크). 지지 발 τ = −Jᵀf(접촉 자코비안), 스윙 발은 IK + 관절 PD.
+- 구조: `srb_mpc.py`(SRB 동역학·이산화·condensing·QP) · `gait.py`(위상·스케줄·Raibert 착지·스윙 궤적) · `body_estimate.FootMemory`(trot 2발 접촉에서도 최근 착지점 4개로 지형 평면) · `walk_node.py`(200 Hz 추정·50 Hz MPC·200 Hz 관절 명령). 지지 발 τ = −Jᵀf(접촉 자코비안), 스윙 발은 IK + 관절 PD.
+- 토크 루프 분리: 토크는 별도 프로세스 `joint_servo`(1 kHz, τ = kp(q_des−q) − kd·q̇ + τ_ff, 명령 50 ms 끊기면 기립 PD)가 낸다. `walk_node`는 `/walk/joint_cmd`(49개: t, q_des·kp·kd·τ_ff ×12)를 200 Hz로 보낸다(⑤-3). 서보 없이는 토크가 없다.
 - 모드: `standup`(0~2 s PD 램프) → `blend` → `stand`(MPC, 4발) → `walk`(명령 있을 때 gait 활성, 끊기면 정지 전이) → `hold`(QP 실패 50 ms·기울기 45°·IMU/관절 0.1 s·IK 실패 20틱, 래치).
 - 런치 인자: `world` · `gui` · `mu` 0.8 · `slope_deg`·`slope_len` 3.0 · `ramp_deg` · 튜닝용 `stride_hz` 3.0 · `lift` 0.025 · `k_raibert` 0.03 · `v_gain` 1.12 · `q_weights`·`q_weights_walk`(13개 쉼표) · `alpha` · `height`·`height_walk` · `contact_source` sensor(기본)|kinematic · `contact_sensors`(kinematic 판정에서 센서만 붙여 계측) · `touch_h` 0.008(kinematic 판정 높이) · `swing_knee_min` 0.7(스윙 목표 무릎 최소 굽힘 rad) · `real_time_factor` 1.0(<1이면 시뮬을 느리게 — 실측용, `walk_metrics --rtf`를 같은 값으로). · `step_anchor` false(밟은 자리 기록 착지 보정·경사 추종 발 기억 — 옵트인 실험, 이득 근거 없음)
-- walk status 진단 필드: `late`(지지 시작 30 ms 후 센서 미접촉 횟수) · `anchor_hit`(기록 높이 사용 비율, step_anchor 켰을 때) · `land_err_mm`(센서 착지 순간 실제−목표 높이 med/p10/p90/n). `walk_metrics --slope` 출력의 `y_drift`는 코스 안 진입 y 대비 최대 횡 이탈(기준 3·5), `y_max`는 정보용(캡처 전체 절대 y).
+- walk status 진단 필드: `servo_gap_ms`(서보 루프 간격 p50/p99/최대, 벽시계) · `servo_stale`(명령 끊김 횟수) · `servo_reject` · `servo_lat_ms`(명령 지연 p99, sim) — `sat`은 서보 값 · `late`(지지 시작 30 ms 후 센서 미접촉 횟수) · `anchor_hit`(기록 높이 사용 비율, step_anchor 켰을 때) · `land_err_mm`(센서 착지 순간 실제−목표 높이 med/p10/p90/n). `walk_metrics --slope` 출력의 `y_drift`는 코스 안 진입 y 대비 최대 횡 이탈(기준 3·5), `y_max`는 정보용(캡처 전체 절대 y).
 - 실측 확정 튜닝(스펙 기본값에서 바뀐 것): `height`·`height_walk` 0.30(0.32는 서 있으면 다리 도달 93%라 좌굴하고, 보행 중엔 몸체가 7 mm 더 떠 착지가 17 ms 늦음) · `lift` 0.025 · `step_max` 0.08 · `v_gain` 1.12(MPC 추종이 89%로 일관) · Q 정지 p_xy 20·v_xy 0.5(밀기 반응), 보행 v_xy 8·p_z 50 · 속도 추정 = `/odom` twist(v_z는 정지 시 다리 오도메트리 저역통과, 보행 시 0) · 지형 법선 저역통과 0.3 s · 스윙은 s 0.85에 착지 후 1 cm 밀기 · 조기 착지만 판정(기본은 발 contact 센서 — 운동학 판정은 발 높이 추정이 10 ms에 4 cm 튀는 것에 속아 공중 발에 힘을 줌) · MPC k=0 접촉 = 실제, 접촉 변화 시 즉시 MPC.
 
 실측(corridor 헤드리스, `log/walk_run.sh <태그> walk_metrics.py <인자> -- [런치 인자]`, 로컬 스크립트):

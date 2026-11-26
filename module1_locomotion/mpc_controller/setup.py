@@ -27,6 +27,7 @@ setup(
             "gait_node = mpc_controller.gait_node:main",
             "balance_node = mpc_controller.balance_node:main",
             "walk_node = mpc_controller.walk_node:main",
+            "joint_servo = mpc_controller.joint_servo:main",
         ],
     },
 )
