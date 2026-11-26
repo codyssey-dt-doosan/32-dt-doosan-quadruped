@@ -36,6 +36,7 @@
         <select id="world-select">
           <option value="corridor">복도 45×3.5×4</option>
           <option value="factory">공장 25×18×7</option>
+          <option value="unity">Unity 통합 플랜트</option>
         </select>
       </label>
     </div>
@@ -69,7 +70,7 @@
         <img alt="" />
         <figcaption><span class="cam-name">전방</span><span class="cam-state">신호 없음</span></figcaption>
       </figure>
-      <figure class="cam off" aria-label="열화상 카메라" data-topic="/thermal/image">
+      <figure class="cam off" aria-label="열화상 카메라" data-topic="/thermal/image" data-unity-topic="/thermal/color">
         <img alt="" />
         <figcaption><span class="cam-name">열화상</span><span class="cam-state">신호 없음</span></figcaption>
       </figure>
@@ -126,6 +127,6 @@
   </main>
 
   <footer>캡처는 REPORT.md · docs/captures 에 첨부</footer>
-  <script type="module" src="app.js?v=6"></script>
+  <script type="module" src="app.js?v=7"></script>
 </body>
 </html>

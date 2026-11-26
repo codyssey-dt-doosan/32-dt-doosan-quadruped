@@ -1,6 +1,6 @@
 // roslib.js 로 rosbridge(ROS 2)에 붙어 카드 + 3D 트윈을 갱신한다.
 // rosbridge 미연결 시에는 웨이포인트를 도는 목업 데이터로 화면을 채운다.
-import { Twin3D, WORLDS } from "./twin3d.js?v=3";
+import { Twin3D, WORLDS } from "./twin3d.js?v=4";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -31,6 +31,7 @@ twin.setWorld(world);
 els.world.addEventListener("change", () => {
   world = els.world.value;
   twin.setWorld(world);
+  syncThermalTopic();
   demo.reset();
 });
 els.follow.addEventListener("click", () => {
@@ -187,6 +188,19 @@ function startCam(cam) {
   cam.img.src = `${url}&t=${Date.now()}`;
 }
 
+function syncThermalTopic() {
+  const thermal = cams[1];
+  if (!thermal || !thermal.fig.dataset.unityTopic) return;
+  const next = world === "unity" ? thermal.fig.dataset.unityTopic : thermal.fig.dataset.topic;
+  if (thermal.topic !== next) {
+    thermal.topic = next;
+    startCam(thermal);
+  }
+}
+
+if (cams[1]?.fig.dataset.unityTopic && world === "unity") {
+  cams[1].topic = cams[1].fig.dataset.unityTopic;
+}
 cams.forEach(startCam);
 videoUrl.addEventListener("change", () => cams.forEach(startCam));
 

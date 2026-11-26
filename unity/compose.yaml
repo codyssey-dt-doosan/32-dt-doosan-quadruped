@@ -7,10 +7,21 @@ services:
     container_name: doosan-unity-rosbridge
     ipc: shareable
     ports:
-      - "127.0.0.1:9090:9090"
+      - "0.0.0.0:9090:9090"
+      - "0.0.0.0:8090:8090"
     volumes:
       - ./tools:/workspace/unity-tools:ro
       - ./config:/workspace/unity-config:ro
+    init: true
+  video:
+    image: doosan-unity-rosbridge:local
+    depends_on: [rosbridge]
+    network_mode: service:rosbridge
+    ipc: service:rosbridge
+    environment:
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    command:
+      [bash, -lc, "source /opt/ros/jazzy/setup.bash && exec ros2 run web_video_server web_video_server --ros-args -p address:=0.0.0.0 -p port:=8090"]
     init: true
   inspection:
     image: doosan-unity-rosbridge:local

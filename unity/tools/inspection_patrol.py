@@ -7,7 +7,7 @@ import time
 import rclpy
 from rclpy.node import Node
 from rclpy.clock import Clock, ClockType
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 
@@ -24,6 +24,8 @@ class Patrol(Node):
         if not math.isfinite(self.cruise_speed) or not .05<=self.cruise_speed<=2.:
             raise ValueError('cruise_speed_mps must be between 0.05 and 2.0 m/s')
         self.pub=self.create_publisher(Twist,'/cmd_vel',10);self.mission=self.create_publisher(String,'/mission/status',10)
+        self.pub_patrol_goal=self.create_publisher(PoseStamped,'/patrol/goal',10)
+        self.pub_rth_goal=self.create_publisher(PoseStamped,'/return_to_home/goal',10)
         self.create_subscription(Odometry,'/odom',self.on_odom,10)
         self.create_subscription(String,'/inspection/status',self.on_inspection,10)
         self.pose=None;self.odom_at=0.;self.sensor_at=0.;self.sensor={};self.stamp=-1
@@ -62,8 +64,16 @@ class Patrol(Node):
         if distance<.15:cmd.linear.x=cmd.angular.z=0.;return True,yaw
         return False,yaw
 
+    def publish_goal(self,publisher,target):
+        msg=PoseStamped();msg.header.frame_id='odom'
+        msg.pose.position.x=float(target['x']);msg.pose.position.y=float(target['y'])
+        msg.pose.orientation.w=1.0
+        publisher.publish(msg)
+
     def dock_home(self,cmd):
-        arrived,_=self.navigate({'name':'Home','x':0.,'y':0.},cmd)
+        home={'name':'Home','x':0.,'y':0.}
+        self.publish_goal(self.pub_rth_goal,home)
+        arrived,_=self.navigate(home,cmd)
         velocity=self.pose.twist.twist.linear
         stationary=math.hypot(velocity.x,velocity.y)<.05
         if arrived and stationary:
@@ -87,7 +97,7 @@ class Patrol(Node):
             self.set_phase('alarm:gas_stop_then_return')
         if self.mode=='return':
             if self.stamp<self.return_after:self.pub.publish(cmd);return
-            target=self.retreat[0];arrived,_=self.navigate(target,cmd)
+            target=self.retreat[0];self.publish_goal(self.pub_rth_goal,target);arrived,_=self.navigate(target,cmd)
             self.set_phase('return:'+target['name'])
             if arrived:
                 self.retreat.pop(0)
@@ -95,7 +105,7 @@ class Patrol(Node):
         elif self.inspection_failed:
             self.set_phase('hold:inspection_failed');cmd=Twist()
         else:
-            target=self.route[self.index];arrived,yaw=self.navigate(target,cmd)
+            target=self.route[self.index];self.publish_goal(self.pub_patrol_goal,target);arrived,yaw=self.navigate(target,cmd)
             if arrived and target.get('inspection'):
                 error=wrap(target['yaw']-yaw)
                 if abs(error)>.035:

@@ -45,6 +45,34 @@ export const WORLDS = {
     ],
     camera: [-18, -16, 16],
   },
+  // unity/config/inspection_route.json (Unity Plant_Inspection ROS /odom 기준)
+  unity: {
+    size: [72, 18, 7],
+    origin: [33, -0.5],
+    obstacles: [
+      { x: 21, y: -0.9, yaw: 0.17 },
+      { x: 34, y: 0.95, yaw: -0.2 },
+    ],
+    gauges: [{ name: "Inspect_Gauges", x: 52.5, y: 1.8, z: 1.4 }],
+    tanks: [{ x: 61.5, y: 0.7 }],
+    plume: { x: 61.5, y: 0.7, sigma: 2.2, peak: 120 },
+    waypoints: [
+      { name: "Home", x: 0, y: 0 },
+      { name: "Ramp_Approach", x: 8, y: 0 },
+      { name: "Ramp_Top", x: 14, y: 0 },
+      { name: "Corridor_Clear", x: 39, y: 0.95 },
+      { name: "Factory_Entry", x: 44.75, y: 0.55 },
+      { name: "North_Aisle", x: 50, y: 4.7 },
+      { name: "Inspect_Gauges", x: 52.5, y: 3.45 },
+      { name: "Machine_East", x: 63, y: 4.2 },
+      { name: "Gas_Leak", x: 61.5, y: 0.7 },
+      { name: "East_Aisle", x: 65, y: -0.55 },
+      { name: "South_Aisle", x: 64, y: -6.8 },
+      { name: "Return_Aisle", x: 50, y: -6.05 },
+      { name: "Factory_Exit", x: 44.75, y: 0.45 },
+    ],
+    camera: [22, -32, 30],
+  },
 };
 
 const COLORS = {
@@ -87,6 +115,7 @@ function makeLabel(text, color = "#e8eef4") {
 // 플룸 가우시안을 바닥 텍스처로 그린다 (plume_sim 과 같은 식)
 function plumeTexture(world) {
   const [L, W] = world.size;
+  const [ox, oy] = world.origin || [0, 0];
   const p = world.plume;
   const res = 256;
   const c = document.createElement("canvas");
@@ -96,8 +125,8 @@ function plumeTexture(world) {
   const img = g.createImageData(c.width, c.height);
   for (let j = 0; j < c.height; j++) {
     for (let i = 0; i < c.width; i++) {
-      const x = -L / 2 + ((i + 0.5) / c.width) * L;
-      const y = W / 2 - ((j + 0.5) / c.height) * W;
+      const x = ox - L / 2 + ((i + 0.5) / c.width) * L;
+      const y = oy + W / 2 - ((j + 0.5) / c.height) * W;
       const v = Math.exp(-((x - p.x) ** 2 + (y - p.y) ** 2) / (2 * p.sigma ** 2));
       const k = (j * c.width + i) * 4;
       img.data[k] = 255;
@@ -252,19 +281,20 @@ export class Twin3D {
     this.worldName = name;
     this.worldGroup.clear();
     const [L, W, H] = w.size;
+    const [ox, oy] = w.origin || [0, 0];
 
     const floor = new THREE.Mesh(
       new THREE.BoxGeometry(L, W, 0.1),
       new THREE.MeshStandardMaterial({ color: COLORS.floor, roughness: 0.9 })
     );
-    floor.position.z = -0.05;
+    floor.position.set(ox, oy, -0.05);
     floor.receiveShadow = true;
     this.worldGroup.add(floor);
 
     // 바닥 크기에 맞춘 1 m 격자
     const gp = [];
-    for (let x = Math.ceil(-L / 2); x <= L / 2; x++) gp.push(x, -W / 2, 0, x, W / 2, 0);
-    for (let y = Math.ceil(-W / 2); y <= W / 2; y++) gp.push(-L / 2, y, 0, L / 2, y, 0);
+    for (let x = Math.ceil(ox - L / 2); x <= ox + L / 2; x++) gp.push(x, oy - W / 2, 0, x, oy + W / 2, 0);
+    for (let y = Math.ceil(oy - W / 2); y <= oy + W / 2; y++) gp.push(ox - L / 2, y, 0, ox + L / 2, y, 0);
     const gridGeom = new THREE.BufferGeometry();
     gridGeom.setAttribute("position", new THREE.Float32BufferAttribute(gp, 3));
     const grid = new THREE.LineSegments(
@@ -277,10 +307,10 @@ export class Twin3D {
     // 벽: 반투명 + 위쪽 시야 확보를 위해 높이 절반만 진하게
     const wallMat = new THREE.MeshStandardMaterial({ color: COLORS.wall, transparent: true, opacity: 0.35 });
     const walls = [
-      [L, 0.1, 0, W / 2 + 0.05],
-      [L, 0.1, 0, -W / 2 - 0.05],
-      [0.1, W + 0.2, L / 2 + 0.05, 0],
-      [0.1, W + 0.2, -L / 2 - 0.05, 0],
+      [L, 0.1, ox, oy + W / 2 + 0.05],
+      [L, 0.1, ox, oy - W / 2 - 0.05],
+      [0.1, W + 0.2, ox + L / 2 + 0.05, oy],
+      [0.1, W + 0.2, ox - L / 2 - 0.05, oy],
     ];
     for (const [sx, sy, x, y] of walls) {
       const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, H), wallMat);
@@ -329,7 +359,7 @@ export class Twin3D {
         new THREE.PlaneGeometry(L, W),
         new THREE.MeshBasicMaterial({ map: plumeTexture(w), transparent: true, depthWrite: false })
       );
-      p.position.z = 0.01;
+      p.position.set(ox, oy, 0.01);
       this.worldGroup.add(p);
     }
 
@@ -363,9 +393,10 @@ export class Twin3D {
 
   resetView() {
     const [cx, cy, cz] = this.world.camera;
+    const [ox, oy] = this.world.origin || [0, 0];
     // ROS (x,y,z) → three (x, z, -y)
     this.camera.position.set(cx, cz, -cy);
-    this.controls.target.set(0, 0, 0);
+    this.controls.target.set(ox, 0, -oy);
     this.controls.update();
   }
 

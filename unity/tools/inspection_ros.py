@@ -36,6 +36,7 @@ class Inspection(Node):
         self.pub_dose=self.create_publisher(Float32,'/gas/exposure',10)
         self.pub_alarm=self.create_publisher(Bool,'/gas/alert',10)
         self.pub_debug=self.create_publisher(Image,'/inspection/gauge_debug',10)
+        self.pub_thermal_color=self.create_publisher(Image,'/thermal/color',10)
         self.create_subscription(Clock,'/clock',self.on_clock,qos_profile_sensor_data)
         self.create_subscription(Odometry,'/odom',self.on_odom,qos_profile_sensor_data)
         self.create_subscription(String,'/mission/status',self.on_mission,10)
@@ -96,11 +97,20 @@ class Inspection(Node):
         try: pixels=np.frombuffer(bytes(msg.data),dtype='>f4' if msg.is_bigendian else '<f4').reshape(msg.height,msg.width)
         except ValueError:return
         if not np.isfinite(pixels).all():return
-        self.counts['thermal']+=1;self.values['temperature_c']=float(pixels.max());self.received['thermal']=time.monotonic()
-        if pixels.max()>=self.cfg['temperature_alarm_c']:
-            self.mark('thermal',pixels.max())
-            heat=cv2.applyColorMap(np.uint8(np.clip((pixels-22)/80,0,1)*255),cv2.COLORMAP_INFERNO)
-            cv2.imwrite('/tmp/inspection-thermal.jpg',cv2.resize(heat,(320,240),interpolation=cv2.INTER_NEAREST))
+        self.counts['thermal']+=1;tmax=float(pixels.max());self.values['temperature_c']=tmax;self.received['thermal']=time.monotonic()
+        norm=np.uint8(np.clip((pixels-10.0)/90.0,0,1)*255)
+        heat=cv2.resize(cv2.applyColorMap(norm,cv2.COLORMAP_INFERNO),(320,240),interpolation=cv2.INTER_NEAREST)
+        bar=cv2.applyColorMap(np.linspace(255,0,200,dtype=np.uint8).reshape(200,1),cv2.COLORMAP_INFERNO)
+        heat[20:220,302:312]=bar
+        cv2.rectangle(heat,(301,19),(312,220),(200,200,200),1)
+        hot=tmax>=self.cfg['temperature_alarm_c']
+        label=f'MAX {tmax:.1f}C' + (' HOT' if hot else '')
+        cv2.putText(heat,label,(10,24),cv2.FONT_HERSHEY_SIMPLEX,0.6,(0,0,0),3,cv2.LINE_AA)
+        cv2.putText(heat,label,(10,24),cv2.FONT_HERSHEY_SIMPLEX,0.6,(60,220,255) if not hot else (60,80,255),2,cv2.LINE_AA)
+        out=Image();out.header=msg.header;out.width=320;out.height=240;out.encoding='bgr8';out.step=320*3;out.data=heat.tobytes();self.pub_thermal_color.publish(out)
+        if hot:
+            self.mark('thermal',tmax)
+            cv2.imwrite('/tmp/inspection-thermal.jpg',heat)
 
     def on_gas(self,msg):
         ppm=float(msg.data)
