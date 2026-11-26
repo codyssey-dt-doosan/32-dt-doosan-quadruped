@@ -7,6 +7,8 @@ from fall_recovery.fall_recovery_node import (
     RECOVERED,
     RECOVERING,
     FallStateMachine,
+    model_z,
+    reset_z,
     set_pose_cmd,
     set_pose_req,
     tilt_deg,
@@ -143,3 +145,29 @@ def test_set_pose_cmd_targets_world_service():
     assert "/world/factory/set_pose" in cmd
     assert "gz.msgs.Pose" in cmd and "gz.msgs.Boolean" in cmd
     assert cmd[-1] == 'name: "go2"'
+
+
+GZ_MODEL_OUT = """Requesting state for world [unity_plant]...
+
+Model: [2332]
+  - Name: go2
+  - Pose [ XYZ (m) ] [ RPY (rad) ]:
+    [7.876220 0.076232 1.012000]
+    [0.005089 0.000194 0.156080]
+"""
+
+
+def test_model_z_parses_gz_model_pose():
+    assert model_z(GZ_MODEL_OUT) == 1.012
+    assert model_z("Service call timed out") is None
+
+
+def test_reset_z_keeps_stand_z_on_flat_floor():
+    assert reset_z(0.4, None) == 0.4      # gz 조회 실패
+    assert reset_z(0.4, 0.15) == 0.4     # 평지에 누운 몸체 — 기존 동작 그대로
+    assert reset_z(0.4, 0.45) == 0.4
+
+
+def test_reset_z_lifts_above_raised_floor():
+    # unity_plant 경사로 위 플랫폼(바닥 0.875 m)에 누운 몸체 z ≈ 0.975 → 바닥 위 stand_z
+    assert math.isclose(reset_z(0.4, 0.975), 0.875 + 0.4)

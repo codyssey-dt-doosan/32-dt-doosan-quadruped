@@ -1,6 +1,7 @@
 """IMU로 전도를 감지하고 Gazebo 포즈 리셋으로 제자리 기립시킨다. 상태는 /fall_recovery/status."""
 
 import math
+import re
 import subprocess
 
 import rclpy
@@ -118,6 +119,26 @@ def set_pose_req(x: float, y: float, yaw: float, z: float, name: str = "go2") ->
     )
 
 
+LYING_Z = 0.1  # 넘어져 누운 몸체 원점의 바닥 위 높이(m, 근사)
+
+
+def model_z(gz_model_out: str) -> float | None:
+    """`gz model -m go2 -p` 출력에서 몸체 z. 형식이 다르면 None."""
+    m = re.search(r"Pose \[ XYZ.*?\n\s*\[\s*(\S+)\s+(\S+)\s+(\S+)\]", gz_model_out)
+    try:
+        return float(m.group(3)) if m else None
+    except ValueError:
+        return None
+
+
+def reset_z(stand_z: float, body_z: float | None) -> float:
+    """기립 z. /odom이 2D라 바닥 높이를 모른다 — 누운 몸체가 stand_z보다 높으면 그만큼 올라온 바닥(경사로·플랫폼)으로 본다.
+    평지(누운 몸체 ≤ stand_z+0.05)에서는 기존처럼 stand_z."""
+    if body_z is None or body_z <= stand_z + 0.05:
+        return stand_z
+    return body_z - LYING_Z + stand_z
+
+
 def set_pose_cmd(world: str, req: str) -> list[str]:
     return [
         "gz", "service", "-s", f"/world/{world}/set_pose",
@@ -170,7 +191,7 @@ class FallRecoveryNode(Node):
         return self.get_clock().now().nanoseconds / 1e9
 
     def reset_pose(self) -> bool:
-        """제자리 기립: odom x, y, yaw 유지, z=stand_z. 성공 시 True."""
+        """제자리 기립: odom x, y, yaw 유지, z=reset_z(바닥이 올라온 곳이면 그 위). 성공 시 True."""
         # ponytail: gz CLI subprocess. 유니티가 물리 맡거나 서비스 브리지로 가면 이 함수만 교체
         if self.odom_msg is None:
             self.get_logger().warn("odom 없음, 리셋 보류")
@@ -179,7 +200,11 @@ class FallRecoveryNode(Node):
         q = self.odom_msg.pose.pose.orientation
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
         world = self.get_parameter("world").value
-        z = self.get_parameter("stand_z").value
+        try:  # 몸체 z는 gz에만 있다(/odom·/tf는 2D). 실패하면 stand_z(평지 가정)
+            body_z = model_z(subprocess.run(["gz", "model", "-m", "go2", "-p"], capture_output=True, text=True, timeout=5.0).stdout)
+        except (subprocess.TimeoutExpired, OSError):
+            body_z = None
+        z = reset_z(self.get_parameter("stand_z").value, body_z)
         cmd = set_pose_cmd(world, set_pose_req(p.x, p.y, yaw, z))
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=2.0)
