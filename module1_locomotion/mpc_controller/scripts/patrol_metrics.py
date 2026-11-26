@@ -68,6 +68,7 @@ def main() -> None:
         s = n.status
         if s is None:
             continue
+        s = s.lower()  # unity_plant 웨이포인트는 'Home'(Unity 경로 이름 그대로)
         if phase == 0 and s != "goto:home":
             phase = 1
         elif phase == 1 and s == "goto:home":
