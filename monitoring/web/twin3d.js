@@ -50,8 +50,9 @@ export const WORLDS = {
     size: [72, 18, 7],
     origin: [33, -0.5],
     obstacles: [
-      { x: 21, y: -0.9, yaw: 0.17 },
-      { x: 34, y: 0.95, yaw: -0.2 },
+      // Unity +Z = ROS +y(시계방향 각도 → ROS yaw 부호 반전). 위치는 unity/config/gazebo_layout.json 충돌 격자 중심
+      { x: 21, y: 1.2, yaw: -0.17 },
+      { x: 34, y: -0.4, yaw: 0.21 },
     ],
     gauges: [{ name: "Inspect_Gauges", x: 52.5, y: 1.8, z: 1.4 }],
     tanks: [{ x: 61.5, y: 0.7 }],
