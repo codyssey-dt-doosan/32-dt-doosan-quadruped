@@ -51,5 +51,5 @@ ros2 launch rosbridge_server rosbridge_websocket_launch.xml
 Docker(Windows)에서 시뮬레이션 + rosbridge + 영상 서버를 함께 띄우기:
 
 ```bash
-docker run --rm -it -p 9090:9090 -p 8090:8090 doosan-quadruped bash -lc "ros2 launch rosbridge_server rosbridge_websocket_launch.xml & ros2 run web_video_server web_video_server --ros-args -p port:=8090 & ros2 launch simulation full_system.launch.py locomotion:=legged gui:=false world:=factory"
+docker run --rm -it -p 127.0.0.1:9090:9090 -p 127.0.0.1:8090:8090 doosan-quadruped bash -lc "ros2 launch rosbridge_server rosbridge_websocket_launch.xml & ros2 run web_video_server web_video_server --ros-args -p port:=8090 & ros2 launch simulation full_system.launch.py locomotion:=legged gui:=false world:=factory"
 ```
