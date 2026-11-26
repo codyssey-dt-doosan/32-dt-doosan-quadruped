@@ -39,7 +39,8 @@ cleanup() {
   echo "Stopping Gazebo Mirror stack..."
   kill "$WEB_PID" "$BRIDGE_PID" "$GZ_PID" 2>/dev/null || true
   pkill -f "gz sim" 2>/dev/null || true
-  pkill -f "walk_node|joint_servo|parameter_bridge" 2>/dev/null || true
+  # ros2 launch가 SIGTERM에 legged 노드(elevation_map·gait·mpc·fall_recovery·patrol)를 남겨 고아가 된다
+  pkill -f "walk_node|joint_servo|parameter_bridge|_node --ros-args|robot_state_publisher" 2>/dev/null || true
   wait "$WEB_PID" "$BRIDGE_PID" "$GZ_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
