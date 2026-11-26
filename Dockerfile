@@ -6,8 +6,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GZ_VERSION=harmonic \
     ROS_DISTRO=jazzy
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gz-harmonic \
+# Gazebo Harmonic 은 ros-jazzy-ros-gz 가 vendor 패키지(ros-jazzy-gz-*-vendor)로 함께 설치한다.
+# gz-harmonic 은 OSRF apt 저장소에만 있어 여기서는 설치하지 않는다.
+# 미러가 간헐적으로 400/해시 오류를 내므로 다운로드를 재시도한다.
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
+    && apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-ros-gz \
     ros-jazzy-ros-gz-bridge \
     ros-jazzy-ros-gz-sim \
@@ -16,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-robot-state-publisher \
     ros-jazzy-joint-state-publisher \
     ros-jazzy-rviz2 \
+    ros-jazzy-rosbridge-suite \
+    ros-jazzy-web-video-server \
     python3-pip \
     python3-colcon-common-extensions \
     python3-opencv \
@@ -28,7 +33,10 @@ COPY . /workspace
 RUN . /opt/ros/jazzy/setup.sh && colcon build --symlink-install
 
 SHELL ["/bin/bash", "-c"]
-RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc \
+# .bashrc 는 비대화형(bash -lc, docker run ... 명령)에서 맨 앞에서 return 하므로
+# 워크스페이스는 엔트리포인트에서 로드한다. 대화형 셸용으로 .bashrc 에도 남긴다.
+RUN sed -i 's|^exec "\$@"|source /workspace/install/setup.bash --\nexec "$@"|' /ros_entrypoint.sh \
+    && echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc \
     && echo "source /workspace/install/setup.bash" >> /root/.bashrc
 
 CMD ["bash", "-lc", "ros2 launch simulation full_system.launch.py"]
