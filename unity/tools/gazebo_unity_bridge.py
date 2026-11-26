@@ -406,12 +406,13 @@ async def run_servers(args: argparse.Namespace) -> None:
     ros_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     ros_thread.start()
 
-    ws_runner = web.AppRunner(make_ws_app(hub))
+    # 종료 시 열린 WS(Unity·대시보드)·MJPEG 스트림 핸들러를 1 s만 기다리고 끊는다 — 기본 60 s × 2라 포트가 남았다
+    ws_runner = web.AppRunner(make_ws_app(hub), shutdown_timeout=1.0)
     await ws_runner.setup()
     ws_site = web.TCPSite(ws_runner, args.host, args.ws_port)
     await ws_site.start()
 
-    vid_runner = web.AppRunner(make_video_app(hub))
+    vid_runner = web.AppRunner(make_video_app(hub), shutdown_timeout=1.0)
     await vid_runner.setup()
     vid_site = web.TCPSite(vid_runner, args.host, args.video_port)
     await vid_site.start()
