@@ -68,6 +68,24 @@ docker compose -f unity/compose.yaml exec rosbridge bash -lc \
 
 씬 재생성은 **Doosan → ROS 2 → Create Connected Scene**을 사용한다. 영상 시연 씬을 복사해 ROS 씬과 경로 JSON을 만든다. 직접 수정한 ROS 씬은 재생성 전에 다른 이름으로 저장한다. 내보낸 `Assets/DoosanReference/ros_route.json`은 저장소 `unity/config/ros_route.json`에도 복사해야 ROS 순찰에 반영된다.
 
+## Gazebo 미러 (`Plant_GazeboMirror`)
+
+물리·제어는 Gazebo + ROS 노드가, 렌더링은 Unity가 맡는 구성이다. Gazebo 월드 `unity_plant`는 이 Unity 발전소의 충돌 배치를 그대로 옮긴 것이라(원점 = Unity Spot 시작점, x = 시작 방향) 두 쪽 맵이 같다. Unity는 `/odom`을 받아 로봇을 같은 위치·자세에 놓고, `/odom`이 2D라 높이는 Unity 바닥(layer 8)에 붙인다. 다리는 실제 관절이 아니라 속도에 맞춘 애니메이션이다.
+
+```bash
+bash unity/tools/start_gazebo_mirror.sh                 # 기본 MODE=legged WORLD=unity_plant
+MODE=walk RTF=0.5 bash unity/tools/start_gazebo_mirror.sh   # SRB MPC + joint_servo (순찰·인지 없이 /cmd_vel만)
+```
+
+Gazebo(헤드리스)·`full_system`·네이티브 브리지(`ws://127.0.0.1:9090`, MJPEG `127.0.0.1:8090`)·대시보드(`http://127.0.0.1:8080/?world=unity`)를 함께 띄운다. 모든 포트는 127.0.0.1에만 열린다. Unity에서 `Plant_GazeboMirror`를 열고 Play하면 붙는다. 종료는 스크립트에 Ctrl+C(SIGTERM이면 노드까지 정리).
+
+- 미러는 `WORLD=unity_plant`에서만 맵이 맞는다. corridor·factory는 스폰이 원점이 아니라 Unity 맵 밖에 놓인다(스크립트가 경고).
+- 이 구성은 순찰만 돌린다(`inspection:=false gas_safety:=false`). Unity 카메라·열화상은 대시보드 영상으로만 가고 ROS 점검 노드로는 들어가지 않는다.
+- **순찰은 경사로 입구(x ≈ 7.9 m)에서 멈춘다.** elevation map·MPC가 0.15 m 넘는 높이를 벽으로 봐서 12° 경사로를 장애물로 판단한다(module1 ⑤-2 미구현).
+- 한 머신에서 Unity HDRP Play를 같이 돌리면 Gazebo RTF가 0.70~0.85에서 0.1 안팎으로 떨어진다(MacBook Air, Unity CPU 약 160%). walk 모드는 이 부하에서 RTF 0.5 기동 중 전도, RTF 0.25에서는 서서 걸었다.
+
+**월드 재생성** — Unity 배치를 바꿨을 때: Play를 끈 상태에서 **Doosan → ROS 2 → Export Gazebo Layout**(Unity 프로젝트 `GazeboLayout/unity_plant_layout.json`) → 저장소 `unity/config/gazebo_layout.json`으로 복사 → `python3 simulation/scripts/unity_layout_to_sdf.py unity/config/gazebo_layout.json`. `simulation/worlds/unity_plant.sdf`와 `patrol_path/config/waypoints_unity_plant.yaml`(`config/inspection_route.json`에서)이 다시 생긴다. 0.1 m 격자로 바닥 높이(경사로·계단·적재물)는 높이 기둥, 바닥 + 0.3~2.3 m를 막는 것은 벽 박스로 만든다. 경사로 그레이팅 구멍은 양쪽 바닥으로 메운다.
+
 ## 구현 범위
 
 ROS 양방향 통신, 속도 입력, 위치·TF·시간·카메라·라이다·합성 IMU, 기본 ROS 경유점 순찰을 구현했다. `patrol_ros.py`는 ROS에서 실행되는 단순 경유점 추종 baseline이며 기존 MPC 알고리즘을 사용하지 않는다. 기존 MPC를 이 Unity 맵에서 사용하려면 경로·센서 높이·지도 설정을 별도로 맞춰 검증해야 한다.
