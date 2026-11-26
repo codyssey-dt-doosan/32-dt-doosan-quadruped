@@ -308,6 +308,14 @@ class GazeboUnityBridgeNode(Node):
                 if ok:
                     self.hub.frames.put("/thermal/image", buf.tobytes(), source_priority=1)
                     self.hub.frames.put("/thermal/color", buf.tobytes(), source_priority=1)
+        elif msg.encoding in ("mono8", "8UC1"):  # Gazebo 열화상 L8(밝기) — 온도가 아니라 컬러맵만 입힌다
+            arr = np.frombuffer(bytes(msg.data), dtype=np.uint8)
+            if arr.size == msg.width * msg.height:
+                heat = cv2.applyColorMap(arr.reshape(msg.height, msg.width), cv2.COLORMAP_INFERNO)
+                ok, buf = cv2.imencode(".jpg", heat, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
+                if ok:
+                    self.hub.frames.put("/thermal/image", buf.tobytes(), source_priority=1)
+                    self.hub.frames.put("/thermal/color", buf.tobytes(), source_priority=1)
 
     def _log_stats(self) -> None:
         self.get_logger().info(
