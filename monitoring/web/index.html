@@ -4,7 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Doosan Quadruped 관제</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=6" />
+  <script src="https://cdn.jsdelivr.net/npm/roslib@1.4.1/build/roslib.min.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
 </head>
 <body>
   <header>
@@ -14,6 +23,14 @@
     </div>
     <div class="header-meta">
       <span id="conn-badge" class="badge off">rosbridge 대기</span>
+      <label>
+        rosbridge
+        <input id="ws-url" type="text" spellcheck="false" />
+      </label>
+      <label>
+        영상
+        <input id="video-url" type="text" spellcheck="false" />
+      </label>
       <label>
         월드
         <select id="world-select">
@@ -25,6 +42,39 @@
   </header>
 
   <main>
+    <section class="card span-3 twin-card">
+      <div class="twin-head">
+        <h2>3D 트윈 (Three.js)</h2>
+        <div class="twin-tools">
+          <span class="legend"><i style="background:#3dba84"></i>순찰 목표</span>
+          <span class="legend"><i style="background:#d4a017"></i>복귀</span>
+          <span class="legend"><i style="background:#c4453c"></i>누출원 추정</span>
+          <span class="legend"><i style="background:#4fa3e0"></i>궤적</span>
+          <button id="btn-follow" type="button">로봇 추적</button>
+          <button id="btn-reset" type="button">시점 초기화</button>
+          <button id="btn-clear" type="button">궤적 지우기</button>
+        </div>
+      </div>
+      <div id="twin3d"></div>
+    </section>
+
+    <section class="card cam-card">
+      <div class="twin-head">
+        <h2>로봇 카메라</h2>
+        <div class="twin-tools">
+          <button id="btn-cam-overlay" type="button" title="/inspection/gauge_debug">판독 오버레이</button>
+        </div>
+      </div>
+      <figure class="cam off" aria-label="전방 카메라" data-topic="/camera/image" data-alt-topic="/inspection/gauge_debug">
+        <img alt="" />
+        <figcaption><span class="cam-name">전방</span><span class="cam-state">신호 없음</span></figcaption>
+      </figure>
+      <figure class="cam off" aria-label="열화상 카메라" data-topic="/thermal/image">
+        <img alt="" />
+        <figcaption><span class="cam-name">열화상</span><span class="cam-state">신호 없음</span></figcaption>
+      </figure>
+    </section>
+
     <section class="card">
       <h2>로봇 트윈</h2>
       <dl>
@@ -35,7 +85,7 @@
     </section>
 
     <section class="card">
-      <h2>순찰 (태우)</h2>
+      <h2>순찰</h2>
       <dl>
         <dt>미션</dt><dd id="mission">idle</dd>
         <dt>목표</dt><dd id="goal">—</dd>
@@ -43,7 +93,7 @@
     </section>
 
     <section class="card">
-      <h2>점검 (운학)</h2>
+      <h2>점검</h2>
       <dl>
         <dt>게이지</dt><dd id="gauge">—</dd>
         <dt>열화상 알람</dt><dd id="thermal">정상</dd>
@@ -51,7 +101,7 @@
     </section>
 
     <section class="card">
-      <h2>가스 안전 (채현)</h2>
+      <h2>가스 안전</h2>
       <dl>
         <dt>농도</dt><dd id="gas">0.0</dd>
         <dt>복귀</dt><dd id="rth">대기</dd>
@@ -62,20 +112,20 @@
     <section class="card span-2">
       <h2>모듈 상태</h2>
       <ul class="modules">
-        <li>elevation_map <span>도훈</span></li>
-        <li>mpc_controller <span>도훈</span></li>
-        <li>fall_recovery <span>도훈</span></li>
-        <li>gauge_ocr <span>운학</span></li>
-        <li>thermal_fusion <span>운학</span></li>
-        <li>patrol_path <span>태우</span></li>
-        <li>plume_sim <span>채현</span></li>
-        <li>source_seeking <span>채현</span></li>
-        <li>return_to_home <span>채현</span></li>
+        <li>elevation_map <span>보행</span></li>
+        <li>mpc_controller <span>보행</span></li>
+        <li>fall_recovery <span>보행</span></li>
+        <li>gauge_ocr <span>점검</span></li>
+        <li>thermal_fusion <span>점검</span></li>
+        <li>patrol_path <span>순찰</span></li>
+        <li>plume_sim <span>가스</span></li>
+        <li>source_seeking <span>가스</span></li>
+        <li>return_to_home <span>가스</span></li>
       </ul>
     </section>
   </main>
 
   <footer>캡처는 REPORT.md · docs/captures 에 첨부</footer>
-  <script src="app.js"></script>
+  <script type="module" src="app.js?v=6"></script>
 </body>
 </html>

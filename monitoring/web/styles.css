@@ -100,3 +100,105 @@ footer {
   main { grid-template-columns: 1fr 1fr; }
   .span-2 { grid-column: span 2; }
 }
+
+input[type="text"] {
+  margin-left: 8px;
+  width: 15em;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.span-4 { grid-column: 1 / -1; }
+.span-3 { grid-column: span 3; }
+.twin-card { padding-bottom: 12px; }
+.twin-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.twin-head h2 { margin: 0; }
+.twin-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.legend { color: var(--muted); font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px; }
+.legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.twin-tools button {
+  background: #11171e;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.twin-tools button:hover { border-color: var(--accent); }
+.twin-tools button.active { background: var(--accent); border-color: var(--accent); color: #0f1419; }
+#twin3d {
+  height: 460px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+#twin3d canvas { display: block; max-width: 100%; }
+main > * { min-width: 0; }
+
+.cam-card { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; }
+.cam-card .twin-head { margin-bottom: 0; }
+.cam {
+  position: relative;
+  margin: 0;
+  flex: 1;
+  min-height: 0;
+  background: #0b0f13;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+}
+.cam img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.cam img:not([src]), .cam.off img { visibility: hidden; }
+.cam figcaption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px;
+  font-size: 0.75rem;
+  background: linear-gradient(rgba(11, 15, 19, 0.8), transparent);
+}
+.cam-state { color: var(--muted); }
+.cam.live .cam-state { color: var(--ok); }
+.cam.off::after {
+  content: "NO SIGNAL";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  letter-spacing: 0.2em;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 960px) {
+  .span-3 { grid-column: 1 / -1; }
+  .cam-card { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
+  .cam-card .twin-head { width: 100%; }
+  .cam { flex: 1 1 240px; }
+}
+
+@media (max-width: 640px) {
+  header { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .header-meta { flex-wrap: wrap; }
+  main { grid-template-columns: 1fr; padding: 16px; }
+  .span-2 { grid-column: auto; }
+  #twin3d { height: 320px; }
+  .modules { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
