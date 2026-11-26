@@ -3,7 +3,14 @@ set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MODE="${MODE:-legged}"   # legged (full_system + MPC + 12-DoF gait) | walk (SRB torque MPC + 1kHz servo)
-WORLD="${WORLD:-corridor}"
+WORLD="${WORLD:-unity_plant}"   # unity_plant = Unity 발전소 배치(원점 = Unity Spot 시작점) | corridor | factory
+if [ "$WORLD" = "unity_plant" ]; then
+  DASH_WORLD=unity
+else
+  DASH_WORLD="$WORLD"
+  # Unity 미러는 /odom을 절대 좌표로 Unity 시작점에 놓는다 — corridor(-20,0)·factory(-10,0) 스폰은 Unity 맵 밖이 된다
+  echo "경고: Unity 미러(Plant_GazeboMirror)는 WORLD=unity_plant에서만 맵이 맞습니다. WORLD=$WORLD는 Gazebo·대시보드 확인용." >&2
+fi
 SLOPE_DEG="${SLOPE_DEG:-0.0}"
 RTF="${RTF:-0.5}"
 
@@ -48,7 +55,7 @@ trap cleanup EXIT INT TERM
 echo ""
 echo "Ready!"
 echo "  1) Unity: Open Assets/Scenes/Plant_GazeboMirror.unity and press Play"
-echo "  2) Three.js: http://127.0.0.1:8080/?world=$WORLD"
+echo "  2) Three.js: http://127.0.0.1:8080/?world=$DASH_WORLD"
 echo "  3) Walk command example:"
 echo "     ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.35}, angular: {z: 0.0}}'"
 echo ""

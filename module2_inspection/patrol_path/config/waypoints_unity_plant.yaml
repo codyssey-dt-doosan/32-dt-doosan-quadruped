@@ -1,0 +1,18 @@
+# Unity 발전소 순찰 경로(unity/config/inspection_route.json, /odom = Unity Spot 시작점) — unity_layout_to_sdf.py 생성
+waypoints:
+  - {name: 01_Ramp_Approach, x: 8.00, y: -0.00, yaw: 0.000, dwell_s: 0.0}
+  - {name: 02_Ramp_Top, x: 14.00, y: -0.00, yaw: 0.000, dwell_s: 0.0}
+  - {name: 03_Corridor_Clear, x: 39.00, y: 0.95, yaw: 0.000, dwell_s: 0.0}
+  - {name: 04_Factory_Entry, x: 44.75, y: 0.55, yaw: 0.000, dwell_s: 0.0}
+  - {name: Transit_0_0, x: 49.50, y: 0.45, yaw: 0.000, dwell_s: 0.0}
+  - {name: North_Aisle, x: 50.00, y: 4.70, yaw: 0.000, dwell_s: 0.0}
+  - {name: Inspect_Gauges, x: 52.50, y: 3.45, yaw: -1.519, dwell_s: 5.0}
+  - {name: Machine_East, x: 63.00, y: 4.20, yaw: 0.000, dwell_s: 0.0}
+  - {name: Gas_Leak_Approach, x: 61.50, y: 0.70, yaw: 0.000, dwell_s: 0.0}
+  - {name: East_Aisle, x: 65.00, y: -0.55, yaw: 0.000, dwell_s: 0.0}
+  - {name: South_Aisle, x: 64.00, y: -6.80, yaw: 0.000, dwell_s: 0.0}
+  - {name: Return_Aisle, x: 50.00, y: -6.05, yaw: 0.000, dwell_s: 0.0}
+  - {name: Transit_6_0, x: 49.50, y: -1.30, yaw: 0.000, dwell_s: 0.0}
+  - {name: Factory_Exit, x: 44.75, y: 0.45, yaw: 0.000, dwell_s: 0.0}
+  - {name: Corridor_Return, x: 14.00, y: -0.00, yaw: 0.000, dwell_s: 0.0}
+  - {name: Home, x: 0.00, y: 0.00, yaw: 0.000, dwell_s: 0.0}

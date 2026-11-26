@@ -7646,7 +7646,7 @@ MonoBehaviour:
   serverUrl: ws://127.0.0.1:9090
   controlFromRos: 1
   gazeboMirror: 1
-  mirrorRelativeOrigin: 1
+  mirrorRelativeOrigin: 0
   commandTimeout: 0.5
   maxLinearSpeed: 2
   maxAngularSpeed: 2

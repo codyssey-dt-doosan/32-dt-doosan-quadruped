@@ -20,6 +20,9 @@ public class DoosanReferencePatrol : MonoBehaviour
     public bool rosControl;
     [Tooltip("Gazebo mirror mode applies external /odom pose directly and disables CharacterController motion.")]
     public bool gazeboMirror;
+    [Tooltip("Gazebo /odom is 2D (z=0): keep the mirrored robot on the plant floor (layer 8) so ramps and stairs show their height.")]
+    public bool mirrorSnapToGround = true;
+    float rideHeight = -1f;
     float rosLinear, rosAngular;
     Vector3 mirrorPos;
     Quaternion mirrorRot = Quaternion.identity;
@@ -54,8 +57,19 @@ public class DoosanReferencePatrol : MonoBehaviour
         if(gazeboMirror){
             if(body&&body.enabled)body.enabled=false;
             if(hasMirrorPose){
+                var target=mirrorPos;
+                if(mirrorSnapToGround){
+                    if(rideHeight<0f)rideHeight=Physics.Raycast(transform.position+Vector3.up*.5f,Vector3.down,out var g,3f,1<<8,QueryTriggerInteraction.Ignore)?transform.position.y-g.point.y:0f;
+                    // Highest of 5 rays across the footprint so the robot does not drop into ramp grating holes.
+                    // Rays start at a fixed height (start floor + 3 m, as DoosanGazeboLayoutExport) so a mirror that
+                    // begins on the raised plant floor still finds it.
+                    float top=initialPosition.y+3f,best=float.NegativeInfinity;
+                    foreach(var o in new[]{Vector3.zero,Vector3.right*.15f,Vector3.left*.15f,Vector3.forward*.15f,Vector3.back*.15f})
+                        if(Physics.Raycast(new Vector3(target.x+o.x,top,target.z+o.z),Vector3.down,out var hit,5f,1<<8,QueryTriggerInteraction.Ignore))best=Mathf.Max(best,hit.point.y);
+                    if(best>float.NegativeInfinity)target.y=best+rideHeight;
+                }
                 float k=1f-Mathf.Exp(-25f*Time.deltaTime);
-                transform.position=Vector3.Lerp(transform.position,mirrorPos,k);
+                transform.position=Vector3.Lerp(transform.position,target,k);
                 transform.rotation=Quaternion.Slerp(transform.rotation,mirrorRot,k);
             }
             if(robotAnimator)robotAnimator.speed=mirrorSpeed>0.03f?Mathf.Clamp(mirrorSpeed*2.2f,0.35f,1.8f):0f;

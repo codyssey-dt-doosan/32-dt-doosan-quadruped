@@ -19,7 +19,8 @@ public static class DoosanGazeboMirrorSetup
         if (!bridge || !drive) throw new System.InvalidOperationException("UnityRosBridge or DoosanReferencePatrol missing on Spot_Robot.");
 
         bridge.gazeboMirror = true;
-        bridge.mirrorRelativeOrigin = true;
+        // Gazebo unity_plant world shares this frame (origin = Spot start), so mirror /odom absolutely.
+        bridge.mirrorRelativeOrigin = false;
         bridge.originAtStart = true;
         bridge.publishLidar = false;
         bridge.publishImu = false;
