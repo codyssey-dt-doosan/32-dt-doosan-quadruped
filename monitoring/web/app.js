@@ -62,7 +62,10 @@ function onOdom(p, q, vx) {
 function onMission(status) {
   els.mission.textContent = status;
   twin.setGaugeReading(/gauge|inspect|dwell|read/i.test(status));
-  if (/return|home|rth/i.test(status)) els.rth.textContent = "복귀 중";
+  // 상태 접두사로만 판정 — 웨이포인트 이름(goto:home·goto:North_Aisle·goto:Return_Aisle)에 걸리지 않게.
+  // 복귀: return_to_home "RETURNING"(moonch), Unity 순찰 "return:…" / 도착: "HOME", "home_safe:…"
+  if (/^(return:|return_to_home: RETURNING)/.test(status)) els.rth.textContent = "복귀 중";
+  else if (/^(home_safe:|return_to_home: HOME)/.test(status)) els.rth.textContent = "복귀 완료";
 }
 
 function onGoal(kind, p) {
