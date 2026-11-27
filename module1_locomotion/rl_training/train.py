@@ -11,6 +11,11 @@ import cfgs
 from export import drift, make_runner
 
 
+def default_log_dir() -> Path:
+    """$RL_LOG_DIR, 없으면 이 폴더의 logs(.gitignore) — 실행 위치와 무관."""
+    return Path(os.environ.get("RL_LOG_DIR") or Path(__file__).resolve().parent / "logs")
+
+
 def prepare_log_dir(path: Path, resume: bool) -> Path | None:
     """resume면 반복 수가 가장 큰 model_*.pt, 새 폴더면 만들고 None. 있는 폴더를 resume 없이 쓰면 FileExistsError."""
     path = Path(path)
@@ -30,7 +35,7 @@ def main():
     ap.add_argument("-e", "--exp-name", required=True)
     ap.add_argument("-b", "--num-envs", type=int, default=4096)
     ap.add_argument("--max-iterations", type=int, default=1500, help="--resume면 이어서 더 돌 반복 수")
-    ap.add_argument("--log-dir", type=Path, default=Path(os.environ.get("RL_LOG_DIR", "logs")))
+    ap.add_argument("--log-dir", type=Path, default=default_log_dir())
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--save-interval", type=int, default=50)
     ap.add_argument("--cpu", action="store_true")

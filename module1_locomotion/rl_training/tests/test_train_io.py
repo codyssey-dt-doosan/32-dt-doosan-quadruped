@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from train import prepare_log_dir  # noqa: E402
+from train import default_log_dir, prepare_log_dir  # noqa: E402
 
 
 def test_prepare_log_dir_refuses_existing(tmp_path):          # Review Focus 1
@@ -26,3 +26,11 @@ def test_resume_picks_highest_iteration(tmp_path):  # 사전순이면 model_9가
 def test_new_dir_is_created(tmp_path):
     assert prepare_log_dir(tmp_path / "a" / "run", resume=False) is None
     assert (tmp_path / "a" / "run").is_dir()
+
+
+def test_default_log_dir_ignores_cwd(tmp_path, monkeypatch):  # 저장소 루트에서 돌려도 rl_training/logs
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RL_LOG_DIR", raising=False)
+    assert default_log_dir() == Path(__file__).resolve().parents[1] / "logs"
+    monkeypatch.setenv("RL_LOG_DIR", str(tmp_path / "x"))
+    assert default_log_dir() == tmp_path / "x"
