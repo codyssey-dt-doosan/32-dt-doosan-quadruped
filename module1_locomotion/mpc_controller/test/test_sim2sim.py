@@ -52,6 +52,11 @@ def test_mass_friction_foot_nominal():
     assert lo <= 0.0 <= hi
 
 
+def test_gravity_matches_worlds():  # Genesis 기본 9.81 대신 Gazebo 월드 값을 쓴다
+    for w in sorted((REPO / "simulation/worlds").glob("*.sdf")):
+        assert [float(x) for x in ET.parse(w).getroot().find(".//gravity").text.split()] == [0.0, 0.0, -CFG["gravity"]], w.name
+
+
 def test_armature_matches_gazebo():  # SDF·walk 변환본에 armature 요소가 없다 → Gazebo/DART 로터 관성 0
     assert CFG["armature"] == 0.0
     walk = make_legged_model(GO2_SDF.read_text(encoding="utf-8"), CFG["nominal"]["mu"], 0.0, 0.0,
@@ -77,5 +82,5 @@ def test_split_diff_contract_vs_training():
     b = copy.deepcopy(CFG)
     b["kp"] += 1.0
     b["dr"]["friction"] = [0.1, 1.2]
-    b["gravity"] = 9.8  # 정책에 없던 학습 전용 키가 생겨도 계약은 그대로
-    assert sim2sim.split_diff(CFG, b) == (["kp"], ["dr.friction", "gravity"])
+    b["terrain"] = {"rows": 10}  # 정책에 없던 학습 전용 키가 생겨도 계약은 그대로
+    assert sim2sim.split_diff(CFG, b) == (["kp"], ["dr.friction", "terrain"])

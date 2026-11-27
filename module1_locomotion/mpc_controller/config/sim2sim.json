@@ -6,7 +6,7 @@
   "kp": 20.0, "kd": 0.5, "armature": 0.0,
   "action_scale": 0.25, "clip_actions": 100.0, "tau_max": 30.0,
   "sim_dt": 0.005, "decimation": 4, "policy_hz": 50, "imu_hz": 200,
-  "foot_r": 0.02, "base_init_z": 0.335, "tilt_max_deg": 45.0,
+  "foot_r": 0.02, "base_init_z": 0.335, "tilt_max_deg": 45.0, "gravity": 9.8,
   "obs": {"order": ["ang_vel", "projected_gravity", "commands", "dof_pos", "dof_vel", "last_action"],
           "scales": {"ang_vel": 0.25, "lin_vel": 2.0, "dof_pos": 1.0, "dof_vel": 0.05}, "dim": 45},
   "commands": {"lin_vel_x": [-0.2, 0.5], "lin_vel_y": [0.0, 0.0], "ang_vel": [-1.0, 1.0], "timeout_s": 0.5},

@@ -40,7 +40,7 @@ class Go2BoxEnv:
         self.reward_scales = {k: v * self.dt for k, v in reward_cfg["reward_scales"].items()}
 
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=env_cfg["sim_dt"], substeps=1),
+            sim_options=gs.options.SimOptions(dt=env_cfg["sim_dt"], substeps=1, gravity=(0.0, 0.0, -env_cfg["gravity"])),
             rigid_options=gs.options.RigidOptions(
                 enable_self_collision=False,
                 max_collision_pairs=20,

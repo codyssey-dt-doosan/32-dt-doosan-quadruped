@@ -77,6 +77,7 @@ def test_pd_force_timing(env, monkeypatch):
     lo, hi = env.robot.get_dofs_force_range(env.motors_dof_idx)
     assert np.allclose(hi.cpu(), 30.0) and np.allclose(lo.cpu(), -30.0)
     assert env.dt == 0.02 and env.scene.dt == 0.005 and env.scene.substeps == 1 and env.decimation == 4
+    assert np.allclose(env.robot.solver.get_gravity().cpu(), [0.0, 0.0, -S2S["gravity"]])  # Genesis 기본 9.81이 아니라 Gazebo 9.8
     # 지연: latency_k=k면 물리 4스텝 중 앞 k번은 직전 목표(q_nom), 나머지는 새 목표 q_nom + s·a
     env.reset()
     env.latency_k[:] = torch.tensor([1, 3])

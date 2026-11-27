@@ -25,6 +25,7 @@ def get_cfgs(s2s: dict, dr: bool = True) -> tuple[dict, dict, dict, dict]:
         "armature": s2s["armature"],
         "tau_max": s2s["tau_max"],
         "sim_dt": s2s["sim_dt"],
+        "gravity": s2s["gravity"],
         "decimation": s2s["decimation"],
         "action_scale": s2s["action_scale"],
         "clip_actions": s2s["clip_actions"],
