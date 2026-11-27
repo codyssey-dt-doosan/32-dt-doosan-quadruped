@@ -27,7 +27,8 @@ def make_env(num_envs, dr):
 
 @pytest.fixture(scope="module")
 def env():
-    gs.init(backend=gs.cpu, logging_level="warning")
+    if not gs._initialized:  # 다른 테스트 파일이 먼저 돌았을 수 있다
+        gs.init(backend=gs.cpu, logging_level="warning")
     return make_env(2, dr=False)
 
 

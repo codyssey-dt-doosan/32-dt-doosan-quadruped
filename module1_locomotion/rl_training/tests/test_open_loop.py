@@ -55,7 +55,7 @@ def replay_rms(env, armature=None):
     qpos, vel = np.zeros(7 + len(idx)), np.zeros(6 + len(idx))
     qpos[:3] = (0.0, 0.0, S2S["foot_r"] - min(f[2] for f in feet))  # 가장 낮은 발이 바닥에 닿는 높이
     qpos[3:7] = quat
-    vel[3:6] = R @ D["w"][0]
+    vel[3:6] = D["w"][0]  # free joint 각속도 dof는 몸체 좌표계(Gazebo IMU w와 같다)
     for k, name in enumerate(S2S["joint_names"]):
         qpos[7 + gidx[name] - 6], vel[gidx[name]] = q0[k], qd0[k]
     r.set_qpos(torch.tensor(qpos, dtype=gs.tc_float, device=gs.device)[None], zero_velocity=True)
