@@ -4,10 +4,10 @@ from pathlib import Path
 
 _OBS_SIZE = {"ang_vel": 3, "projected_gravity": 3, "commands": 3}
 
-# 배포 계약: rl_node가 관측을 만들고 행동을 서보 명령으로 바꿀 때 읽는 키. 다르면 정책이 다른 입출력을 기대한다.
-# 나머지(armature·sim_dt·dr·nominal 등)는 학습 쪽 물리·랜덤화 조건이다.
+# 배포 계약: rl_node가 관측을 만들고 행동을 서보 명령으로 바꿀 때 읽는 키(점 표기 경로). 다르면 정책이 다른 입출력을 기대한다.
+# 나머지(armature·sim_dt·dr·nominal·commands.timeout_s 등)는 학습 쪽 물리·랜덤화 조건이거나 rl_node만 쓰는 값이다.
 CONTRACT = ("joint_names", "q_nom", "kp", "kd", "action_scale", "clip_actions", "policy_hz", "imu_hz",
-            "tilt_max_deg", "obs", "commands")
+            "tilt_max_deg", "obs", "commands.lin_vel_x", "commands.lin_vel_y", "commands.ang_vel")
 
 
 def load(path=None) -> dict:
@@ -41,7 +41,11 @@ def diff(a, b, prefix="") -> list:
 
 
 def split_diff(a, b) -> tuple[list, list]:
-    """diff를 (배포 계약 키, 학습 전용 키)로 나눈다."""
+    """diff를 (배포 계약 키, 학습 전용 키)로 나눈다. a = 정책에 박힌 사본, b = 설치된 JSON.
+    sim_dt·decimation은 학습 전용이지만 곱(정책이 학습된 제어 주기)이 b의 policy_hz와 다르면 계약 위반이다."""
     keys = diff(a, b)
-    contract = [k for k in keys if k.split(".")[0] in CONTRACT]
-    return contract, [k for k in keys if k not in contract]
+    contract = [k for k in keys if any(k == c or k.startswith(c + ".") for c in CONTRACT)]
+    other = [k for k in keys if k not in contract]
+    if abs(a["sim_dt"] * a["decimation"] * b["policy_hz"] - 1.0) > 1e-9:
+        contract.append("sim_dt×decimation")
+    return contract, other

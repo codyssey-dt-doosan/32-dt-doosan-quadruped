@@ -78,9 +78,24 @@ def test_diff():
 
 
 def test_split_diff_contract_vs_training():
-    assert set(sim2sim.CONTRACT) <= CFG.keys()
+    for c in sim2sim.CONTRACT:  # 계약 경로가 모두 실제 키다
+        node = CFG
+        for part in c.split("."):
+            node = node[part]
     b = copy.deepcopy(CFG)
     b["kp"] += 1.0
     b["dr"]["friction"] = [0.1, 1.2]
     b["terrain"] = {"rows": 10}  # 정책에 없던 학습 전용 키가 생겨도 계약은 그대로
     assert sim2sim.split_diff(CFG, b) == (["kp"], ["dr.friction", "terrain"])
+
+
+def test_split_diff_policy_period_and_rl_node_only_keys():
+    a = copy.deepcopy(CFG)
+    a["decimation"] = 2  # 100 Hz로 학습한 정책을 50 Hz로 돌리면 안 된다
+    assert sim2sim.split_diff(a, CFG) == (["sim_dt×decimation"], ["decimation"])
+    a["sim_dt"], a["decimation"] = 0.004, 5  # 주기가 같으면 학습 전용 차이
+    assert sim2sim.split_diff(a, CFG) == ([], ["decimation", "sim_dt"])
+    b = copy.deepcopy(CFG)
+    b["commands"]["timeout_s"] = 1.0  # rl_node만 쓰는 값
+    b["commands"]["ang_vel"] = [-0.5, 0.5]
+    assert sim2sim.split_diff(CFG, b) == (["commands.ang_vel"], ["commands.timeout_s"])
