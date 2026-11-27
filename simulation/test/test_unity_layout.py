@@ -59,3 +59,60 @@ def test_fill_pits_bridges_grating_holes_but_not_edges():
     out = ul.fill_pits(h, np.ones_like(h, dtype=bool))
     assert np.isclose(out[0, 1], 0.075)            # 양쪽 0.088·0.062 → 평균
     assert out[0, 3] == 0.0 and out[0, 4] == 0.0   # 한쪽(0.30)만 높은 모서리는 그대로
+
+
+def _ramp_layout(rect=True):
+    """바닥 0(x 셀 0~9) → 기울기 0.2 경사로(10~29) → 위층 0.4 m(30~39), 양옆 벽. rect=False면 경사로 한 귀퉁이를 바닥으로."""
+    a = np.zeros((12, 40), dtype=int)
+    for i in range(10, 30):
+        a[2:10, i] = round(((i - 10) + 0.5) * 0.1 * 0.2 * 1000)
+    a[2:10, 30:] = 400
+    a[[0, 1, 10, 11], :] = WALL
+    if not rect:
+        a[2:5, 10:14] = 0
+    return _layout(a)
+
+
+def _pipeline(lay):
+    h, wall, void = ul.load_grid(lay)
+    floor = ~(wall | void)
+    ramps = ul.find_ramps(h, floor, lay["resolution"])
+    cls, base = ul.classify(h, wall, void, ramps)
+    return ramps, ul.world_sdf(lay, h, cls, base, ramps)
+
+
+def _pose_size(sdf, name):
+    import re
+    m = re.search(rf'<collision name="{name}"><pose>([^<]+)</pose><geometry><box><size>([^<]+)</size>', sdf)
+    return list(map(float, m.group(1).split())), list(map(float, m.group(2).split()))
+
+
+def test_ramp_becomes_one_tilted_box_instead_of_pillars():
+    ramps, sdf = _pipeline(_ramp_layout())
+    assert len(ramps) == 1
+    assert sdf.count('<collision name="ramp_') == 1
+    assert sdf.count('<collision name="step_') == 1  # 위층 0.4 m 한 덩어리만, 경사로 기둥 없음
+    (x, y, z, roll, pitch, yaw), (sx, sy, sz) = _pose_size(sdf, "ramp_0")
+    assert np.isclose(pitch, -np.arctan(0.2), atol=0.01) and roll == 0 and yaw == 0
+    assert np.isclose(sy, 0.8, atol=1e-3)  # 경사로 폭 8셀
+
+
+def test_ramp_top_surface_meets_low_floor_and_upper_floor():
+    _, sdf = _pipeline(_ramp_layout())
+    (x, y, z, _, pitch, _), (sx, sy, sz) = _pose_size(sdf, "ramp_0")
+    c, s = np.cos(pitch), np.sin(pitch)
+    def world(lx, lz):  # Ry(pitch)·(lx, 0, lz) + center
+        return x + c * lx + s * lz, z - s * lx + c * lz
+    x0, z0 = world(-sx / 2, sz / 2)   # 윗면 낮은 끝
+    x1, z1 = world(sx / 2, sz / 2)    # 윗면 높은 끝
+    ox = -0.15
+    assert np.isclose(x0, ox + 1.0, atol=0.01) and abs(z0) < 0.01         # 바닥(0)에서 시작
+    assert np.isclose(x1, ox + 3.0, atol=0.01) and abs(z1 - 0.4) < 0.01   # 위층(0.4)에 닿음
+    assert world(-sx / 2, -sz / 2)[1] < 0 and world(sx / 2, -sz / 2)[1] < 0  # 아랫면은 바닥 아래 — 속이 찬 경사로
+
+
+def test_non_rectangular_slope_stays_pillars():
+    ramps, sdf = _pipeline(_ramp_layout(rect=False))
+    assert ramps == []
+    assert '<collision name="ramp_' not in sdf
+    assert sdf.count('<collision name="step_') > 1
