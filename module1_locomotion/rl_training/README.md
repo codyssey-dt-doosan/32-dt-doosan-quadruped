@@ -28,6 +28,20 @@ uv pip install -r requirements.txt
 - 관측: actor `policy` 45차원(각속도, 중력, 명령 (v_x, 0, w_z), q − q_nom, q̇, 직전 행동), critic은 `privileged`(참값 선속도, 마찰, 추가 질량)를 더 본다
 - 종료: 기울기 > 45°, base_link 지면 접촉, 20 s, Genesis 오류 env
 
+## Colab 학습
+
+`colab_train.ipynb`(Colab Pro, T4/L4/A100). RL 코드가 GitHub에 push되어 있어야 한다.
+
+| 셀 | 내용 |
+|----|------|
+| 1~2 | `nvidia-smi`, Drive 마운트 |
+| 3 | `requirements.txt` 설치(Colab 기본 torch를 쓰므로 `torch==` 줄은 제외) |
+| 4 | T4 속도 측정: Genesis v1.5.0 공식 `go2_train.py`(-b 4096, 101 iter)의 총 시간·step/s. 비교 기준은 Mac 약 5.7만 step/s |
+| 5 | `BRANCH`(기본 `main`) 클론 후 `train.py` 실행. `--log-dir`은 Drive `rl_go2`, `--save-interval 50`마다 체크포인트 저장. run 폴더에 `model_*.pt`가 있으면 `--resume`, 없으면 새로 시작 |
+
+- Pro 한도: 백그라운드 실행 없음, 세션 최대 약 12 h(그 전에 끊길 수 있음), 동시 세션 1개. 브라우저 탭을 열어 두고, Mac은 `caffeinate -dims`로 잠자기를 막는다
+- 끊기면 노트북을 다시 열어 셀 2·3·5를 실행하면 Drive의 마지막 체크포인트에서 이어 간다
+
 ## 테스트
 
 ```bash
