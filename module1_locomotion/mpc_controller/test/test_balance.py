@@ -266,6 +266,56 @@ def test_slope_segments_y_drift_only_on_course():
     assert slope_segments(rows[:5], deg, L)["y_drift"] is None  # 코스 도달 전
 
 
+def test_slope_ok_downhill_threshold_follows_angle():
+    """내리막 최대 기울기 문턱 = 지형각 + 5° — 20° 내리막은 지형과 평행해도 ≈20°라 고정 20° 문턱은 통과 불가."""
+    from walk_metrics import slope_ok
+
+    def s(down_tilt):
+        return {"completed": True, "y_drift": 0.1, "up": {"v": 0.2, "pitch_err": 1.0},
+                "down": {"tilt_max": down_tilt, "v_max": 0.3, "pitch_err": -1.0}}
+
+    assert not slope_ok(s(22.0), 15.0) and slope_ok(s(22.0), 20.0)
+    assert slope_ok(s(19.0), 15.0)  # 15°는 지금과 같은 20° 문턱
+
+
+def _course_rows(x_end):
+    """x −20 → x_end를 0.01 m·0.033 s 간격으로. 진입 y 0.05, 코스(−18 ~ −14.8) 안 최대 +0.1."""
+    rows, t, x = [], 0.0, -20.0
+    while x <= x_end:
+        y = 0.05 + (0.1 * (x + 18.0) / 3.2 if -18.0 <= x <= -14.8 else 0.0)
+        rows.append((x, y, 0.3, 2.0, 0.0, 0.0, {}, t))
+        x += 0.01
+        t += 0.033
+    return rows
+
+
+def test_course_segments_complete():
+    from walk_metrics import course_segments
+
+    c = course_segments(_course_rows(-14.0), 3.2)
+    assert c["completed"] is True
+    assert c["y_drift"] == pytest.approx(0.1, abs=2e-3)
+    assert c["t_course"] == pytest.approx(3.2 / 0.01 * 0.033, rel=0.01) and c["t_course"] > 0
+    assert c["v_course"] == pytest.approx(0.01 / 0.033, rel=0.01)
+
+
+def test_course_segments_incomplete_fails():
+    """코스 중간에서 멈춘 실행(전도·hold)은 완주 아님 — PASS 조건 completed가 False, 통과 시간 없음."""
+    from walk_metrics import course_segments
+
+    c = course_segments(_course_rows(-16.0), 3.2)
+    assert c["completed"] is False and c["t_course"] is None and c["v_course"] is None
+
+
+def test_course_len():
+    from walk_metrics import course_len
+
+    assert course_len("stairs", 3) == pytest.approx(3.2)
+    assert course_len("pipes", 5) == pytest.approx(3.4)
+    assert course_len("plate", None) == pytest.approx(3.0)
+    assert course_len("stairs", None) == course_len("stairs", 3)
+
+
 def test_replay_errors_stride_window_ignores_trot_sway_and_accel(tmp_path):
     """기준 2: 3 Hz 전후 흔들림은 보폭 창 평균에서 사라지고, 명령 변화 후 0.5 s 창은 채점 안 함."""
     import math

@@ -6,6 +6,7 @@
   --replay F.csv    : 기록을 sim 시각에 맞춰 재발행 → 보폭 창 평균 속도 추종 RMS(명령 변화 후 0.5 s 제외)·종점 오차 (기준 2)
   --replay-window S D : --replay 파일에서 S ≤ t < S+D 구간만 잘라 재영점(t -= S) 후 재생
   --slope DEG LEN   : x 구간(오르막/평지/내리막)별 속도·pitch·최대 기울기·횡 드리프트 (기준 3~5, --cmd와 같이)
+  --course KIND [N] : stairs|pipes|plate 시험 코스 완주·횡 드리프트 (스펙 §5, --cmd와 같이, --slope와 배타). N = stairs_n·pipes_n
 판정 공통: hold 0, fail(첫 3틱 제외) 0, sat ≤ 50, mpc 평균 < 5 ms·p99 < 10 ms, 전도(tilt > 45°) 0, servo_stale 0.
 """
 import argparse
@@ -238,6 +239,47 @@ def slope_segments(rows: list, deg: float, L: float) -> dict:
     return out
 
 
+def slope_ok(s: dict, deg: float) -> bool:
+    """--slope 판정(기준 3~5). 내리막 최대 기울기 문턱은 지형각 + 5° — 20° 내리막은 지형과 평행해도 ≈20°다."""
+    min_up = 0.15 if deg >= 20 else 0.05  # 기준 3은 20°에서만 속도 하한
+    return (s["completed"] and s["y_drift"] is not None and s["y_drift"] < 0.3
+            and all(seg is None or abs(seg["pitch_err"]) < 5.0 for seg in (s["up"], s["down"]))
+            and s["up"] is not None and s["up"]["v"] >= min_up
+            and (s["down"] is None or (s["down"]["tilt_max"] < deg + 5.0 and s["down"]["v_max"] <= 0.4)))
+
+
+def course_len(kind: str, n: int | None) -> float:
+    """시험 코스 x 길이 [m]. n 없으면 시험 기본(계단 3단·파이프 5개)."""
+    from mpc_controller.legged_model import PLATE_LEN, pipes_len, stairs_len  # 런치가 쓰는 설치 패키지 — --course만 필요
+
+    if kind == "stairs":
+        return stairs_len(n or 3)
+    if kind == "pipes":
+        return pipes_len(n or 5)
+    if kind == "plate":
+        return PLATE_LEN
+    raise ValueError(f"코스 {kind!r} — stairs|pipes|plate")
+
+
+def course_segments(rows: list, length: float) -> dict:
+    """스펙 §5 코스(x0 = 스폰 + 2 m ~ x1 = x0 + length): 완주(x1 + 0.3 m)·횡 드리프트·통과 시간·평균 속도.
+
+    y_drift·tilt_max는 코스 안 행만(2행 미만이면 None). t_course = x0 첫 통과 → x1 첫 통과, 미완주면 None.
+    """
+    x0 = SPAWN_X + 2.0
+    x1 = x0 + length
+    out = {"completed": max(q[0] for q in rows) >= x1 + 0.3}
+    course = [q for q in rows if x0 <= q[0] <= x1]
+    out["y_drift"] = max(abs(q[1] - course[0][1]) for q in course) if len(course) >= 2 else None
+    out["tilt_max"] = max(q[3] for q in course) if len(course) >= 2 else None
+    t = None
+    if out["completed"]:
+        t = next(q[7] for q in rows if q[0] >= x1) - next(q[7] for q in rows if q[0] >= x0)
+    out["t_course"] = t
+    out["v_course"] = length / t if t else None
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--world", default="corridor")
@@ -249,7 +291,15 @@ def main() -> int:
     ap.add_argument("--replay", metavar="F")
     ap.add_argument("--replay-window", nargs=2, type=float, metavar=("S", "D"))
     ap.add_argument("--slope", nargs=2, type=float, metavar=("DEG", "LEN"))
+    ap.add_argument("--course", nargs="+", metavar=("KIND", "N"), help="stairs|pipes|plate, N = 런치 stairs_n·pipes_n(기본 3·5)")
     a = ap.parse_args()
+    if a.course:
+        if not a.cmd or a.slope or len(a.course) > 2:
+            ap.error("--course KIND [N]은 --cmd와 같이, --slope와는 따로")
+        try:
+            course_L = course_len(a.course[0], int(a.course[1]) if len(a.course) > 1 else None)
+        except ValueError as e:
+            ap.error(f"--course: {e}")
     if a.record:
         _record(a.record[0], float(a.record[1]))
         return 0
@@ -291,11 +341,11 @@ def main() -> int:
             if a.slope:
                 s = slope_segments(rows, *a.slope)
                 out += f" slope={s}"
-                ok &= s["completed"] and s["y_drift"] is not None and s["y_drift"] < 0.3
-                ok &= all(seg is None or abs(seg["pitch_err"]) < 5.0 for seg in (s["up"], s["down"]))
-                min_up = 0.15 if a.slope[0] >= 20 else 0.05  # 기준 3은 20°에서만 속도 하한
-                ok &= s["up"] is not None and s["up"]["v"] >= min_up
-                ok &= s["down"] is None or (s["down"]["tilt_max"] < 20.0 and s["down"]["v_max"] <= 0.4)
+                ok &= slope_ok(s, a.slope[0])
+            elif a.course:
+                c = course_segments(rows, course_L)
+                out += f" course={c}"
+                ok &= c["completed"] and c["y_drift"] is not None and c["y_drift"] < 0.3  # tilt·시간·속도는 정보용
             else:
                 ok &= m["err_v"] < 0.10 and m["err_w"] < 0.10 and m["tilt_max"] < 3.0 and m["z_std"] < 0.01
         elif a.replay:
@@ -310,7 +360,7 @@ def main() -> int:
             ok &= e["n_win"] > 0 and e["rms_v"] < 0.05 and e["rms_w"] < 0.10 and e["end_err"] < 0.10 * e["path_len"]
         print(out)
         print("PASS" if ok else "FAIL")
-        if a.cmd and not a.slope:
+        if a.cmd and not a.slope and not a.course:
             gate = common and track_floor(v, w, m["v_meas"], m["w_meas"])
             print("GATE PASS" if gate else "GATE FAIL")
         return 0 if ok else 1
