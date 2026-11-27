@@ -37,7 +37,8 @@ def get_cfgs(s2s: dict, dr: bool = True) -> tuple[dict, dict, dict, dict]:
     }
     obs_cfg = {"order": s2s["obs"]["order"], "obs_scales": dict(s2s["obs"]["scales"])}
     reward_cfg = {
-        "tracking_sigma": 0.25,
+        # 명령 최대 0.5 m/s에 맞춰 0.25×0.5²; 0.25면 3 cm/s 오차가 보상 0.4%라 후진이 13~19% 느림
+        "tracking_sigma": 0.0625,
         "base_height_target": s2s["base_init_z"],
         "reward_scales": {
             "tracking_lin_vel": 1.0,
