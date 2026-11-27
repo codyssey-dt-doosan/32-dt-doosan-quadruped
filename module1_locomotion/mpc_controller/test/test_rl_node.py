@@ -11,8 +11,8 @@ from mpc_controller.balance_node import blend
 from mpc_controller.joint_servo import pack_cmd, unpack_cmd
 from mpc_controller.leg_kinematics import LIMITS
 from mpc_controller.legged_model import JOINTS
-from mpc_controller.rl_node import (action_to_q, build_obs, cmd_or_zero, joints_by_name, projected_gravity,
-                                    resolve_policy, rl_supervise, startup_gains, status_line)
+from mpc_controller.rl_node import resolve_policy, rl_supervise, startup_gains, status_line
+from mpc_controller.rl_obs import action_to_q, build_obs, cmd_or_zero, joints_by_name, projected_gravity
 
 CFG = sim2sim.load(Path(__file__).resolve().parents[1] / "config/sim2sim.json")
 
