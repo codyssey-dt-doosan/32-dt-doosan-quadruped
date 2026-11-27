@@ -159,7 +159,7 @@ class RlNode(Node):
         self.create_subscription(Float64MultiArray, "/joint_servo/status", self._servo_cb, 10)
         self.create_timer(1.0, self._status)
         threading.Timer(self.p["start_delay"], self._unpause).start()
-        self.get_logger().info(f"walk started (rl) policy={path}")
+        self.get_logger().info(f"walk started (rl) policy={path} meta={rl_policy.load_meta(path)}")
 
     def _unpause(self) -> None:
         err = gz_unpause(self.p["world"])

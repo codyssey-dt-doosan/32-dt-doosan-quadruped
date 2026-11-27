@@ -1,4 +1,4 @@
-"""numpy 정책 형식: npz 왕복, ELU 은닉층 + 선형 출력, 관측 차원 검사."""
+"""numpy 정책 형식: npz 왕복, ELU 은닉층 + 선형 출력, 관측 차원 검사, 출처 meta."""
 from pathlib import Path
 
 import numpy as np
@@ -24,3 +24,14 @@ def test_rejects_wrong_obs_dim(tmp_path):
     pol, _ = rl_policy.load(tmp_path / "p.npz")
     with pytest.raises(ValueError):
         pol.act(np.zeros(44))
+
+
+def test_meta_roundtrip_and_old_file(tmp_path):
+    layers = [(np.zeros((12, 45)), np.zeros(12))]
+    meta = {"run": "flat_v3", "ckpt": "model_599.pt", "iteration": 599, "git": "abc"}
+    rl_policy.save(tmp_path / "m.npz", layers, CFG, meta=meta)
+    assert rl_policy.load_meta(tmp_path / "m.npz") == meta
+    pol, cfg = rl_policy.load(tmp_path / "m.npz")       # meta가 층 수 세기에 끼지 않는다
+    assert len(pol.layers) == 1 and cfg == CFG
+    rl_policy.save(tmp_path / "old.npz", layers, CFG)
+    assert rl_policy.load_meta(tmp_path / "old.npz") == {}

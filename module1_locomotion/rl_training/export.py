@@ -1,5 +1,6 @@
 """체크포인트 actor → numpy npz(rl_policy 형식). 사용: python export.py --run-dir DIR --ckpt model_N.pt --out PATH.npz"""
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,13 +38,22 @@ def torch_actor_mean(runner, obs: torch.Tensor) -> torch.Tensor:
         return actor(td).cpu()
 
 
-def export_actor(runner, cfg: dict, out) -> None:
+def git_head() -> str:
+    """내보낼 때 저장소 HEAD, 실패하면 "unknown"."""
+    try:
+        r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent, capture_output=True, text=True)
+    except OSError:
+        return "unknown"
+    return r.stdout.strip() if r.returncode == 0 else "unknown"
+
+
+def export_actor(runner, cfg: dict, out, meta: dict | None = None) -> None:
     actor = runner.alg.get_policy()
     if actor.obs_normalization:  # numpy 정책은 관측 정규화를 재현하지 않는다
         raise ValueError("actor obs_normalization is not supported by rl_policy")
     layers = [(m.weight.detach().cpu().numpy(), m.bias.detach().cpu().numpy())
               for m in actor.mlp if isinstance(m, torch.nn.Linear)]
-    rl_policy.save(out, layers, cfg, runner.cfg["actor"]["activation"])
+    rl_policy.save(out, layers, cfg, runner.cfg["actor"]["activation"], meta)
 
 
 def main(argv=None) -> int:
@@ -60,8 +70,9 @@ def main(argv=None) -> int:
     runner = make_runner(num_envs=1, cpu=True, dr=False)
     runner.load(str(a.run_dir / a.ckpt), map_location="cpu")
     a.out.parent.mkdir(parents=True, exist_ok=True)
-    export_actor(runner, cfgs.load_sim2sim(), a.out)
-    print(f"{a.out} {a.out.stat().st_size / 1e6:.2f} MB")
+    meta = {"run": a.run_dir.resolve().name, "ckpt": a.ckpt, "iteration": runner.current_learning_iteration, "git": git_head()}
+    export_actor(runner, cfgs.load_sim2sim(), a.out, meta)
+    print(f"{a.out} {a.out.stat().st_size / 1e6:.2f} MB {meta}")
     return 0
 
 

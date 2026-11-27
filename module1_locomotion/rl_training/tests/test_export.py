@@ -1,4 +1,4 @@
-"""export.py: numpy 정책 = rsl_rl actor 결정적 평균, 학습 때 sim2sim 사본과 저장소 JSON이 다르면 거부."""
+"""export.py: numpy 정책 = rsl_rl actor 결정적 평균, 학습 때 sim2sim 사본과 저장소 JSON이 다르면 거부, 출처 meta."""
 import json
 import sys
 from pathlib import Path
@@ -33,3 +33,16 @@ def test_export_refuses_config_drift(tmp_path, capsys):
     assert export.main(["--run-dir", str(run), "--ckpt", "model_0.pt", "--out", str(out)]) == 1
     assert "kp" in capsys.readouterr().out
     assert not out.exists()
+
+
+def test_export_writes_meta(tmp_path):
+    run = tmp_path / "run_x"
+    run.mkdir()
+    (run / "sim2sim.json").write_text(json.dumps(CFG))
+    runner = make_runner(num_envs=2, cpu=True)
+    runner.current_learning_iteration = 7
+    runner.save(str(run / "model_7.pt"))
+    out = tmp_path / "p.npz"
+    assert export.main(["--run-dir", str(run), "--ckpt", "model_7.pt", "--out", str(out)]) == 0
+    meta = rl_policy.load_meta(out)
+    assert (meta["run"], meta["ckpt"], meta["iteration"]) == ("run_x", "model_7.pt", 7) and meta["git"]

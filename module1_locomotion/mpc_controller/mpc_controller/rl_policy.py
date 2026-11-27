@@ -24,12 +24,15 @@ class Policy:
         return w @ h + b
 
 
-def save(path, layers, cfg: dict, activation: str = "elu") -> None:
+def save(path, layers, cfg: dict, activation: str = "elu", meta: dict | None = None) -> None:
+    """meta = 출처(run·ckpt·iteration·git), 추론엔 안 쓴다."""
     if activation not in _ACT:
         raise ValueError(f"unsupported activation {activation}")
     arrays = {}
     for i, (w, b) in enumerate(layers):
         arrays[f"w{i}"], arrays[f"b{i}"] = w, b
+    if meta is not None:
+        arrays["meta"] = json.dumps(meta)
     np.savez(path, activation=activation, sim2sim=json.dumps(cfg), **arrays)
 
 
@@ -38,3 +41,9 @@ def load(path) -> tuple[Policy, dict]:
         n = sum(k.startswith("w") for k in z.files)
         layers = [(z[f"w{i}"], z[f"b{i}"]) for i in range(n)]
         return Policy(layers, str(z["activation"])), json.loads(str(z["sim2sim"]))
+
+
+def load_meta(path) -> dict:
+    """save의 meta, 없던 시절 파일이면 {}."""
+    with np.load(path) as z:
+        return json.loads(str(z["meta"])) if "meta" in z.files else {}
