@@ -84,9 +84,10 @@ def test_fk_matches_leg_kinematics():  # 부호·축 오류를 잡는다
 
 def test_mass_axes_limits_effort_damping():
     assert abs(urdf_total_mass(URDF) - 13.2) < 1e-9
-    for j in JOINTS:
+    for i, j in enumerate(JOINTS):
         assert urdf_axis(URDF, j) == sdf_axis(GO2_SDF, j)
         assert urdf_limits(URDF, j) == sdf_limits(GO2_SDF, j)
+        assert urdf_limits(URDF, j) == LIMITS[i % 3]  # rl_node 행동 클립(Q_LO·Q_HI) = Genesis 클립(URDF 한계)
         assert urdf_effort(URDF, j) == 30.0 and urdf_damping(URDF, j) == 0.0
 
 
