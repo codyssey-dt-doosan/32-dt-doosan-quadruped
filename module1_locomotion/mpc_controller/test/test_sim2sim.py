@@ -50,6 +50,8 @@ def test_mass_friction_foot_nominal():
     assert all(lo <= m <= hi for m in [CFG["nominal"]["mu"], *CFG["nominal"]["test_mu"]])
     lo, hi = CFG["dr"]["added_mass"]
     assert lo <= 0.0 <= hi
+    dr = CFG["dr"]  # Gazebo 공칭은 밀기 0·IMU 잡음 0 → U(−push_vel, push_vel)·N(0, ang_vel_noise) 범위 안
+    assert -dr["push_vel"] <= 0.0 <= dr["push_vel"] and dr["ang_vel_noise"] >= 0.0 and dr["push_interval_s"] > 0.0
 
 
 def test_gravity_matches_worlds():  # Genesis 기본 9.81 대신 Gazebo 월드 값을 쓴다

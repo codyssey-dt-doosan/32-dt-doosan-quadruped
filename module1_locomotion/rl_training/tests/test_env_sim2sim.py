@@ -125,3 +125,26 @@ def test_dr_ranges(env_dr):  # dr=True, 64 env
         assert lo <= values.min() and values.max() <= hi and values.std() > 0, key
         q = 0.25 * (hi - lo)  # 범위 양 끝 25%에 표본이 있다(잘린 범위를 잡는다, 64개면 실패 확률 ~1e-8)
         assert values.min() < lo + q and values.max() > hi - q, key
+
+
+def test_dr_push_and_noise_ranges(env, env_dr, monkeypatch):
+    p, zero = S2S["dr"]["push_vel"], torch.zeros((env_dr.num_envs, env_dr.num_actions), dtype=gs.tc_float)
+    env.reset(), env_dr.reset()
+    env_dr.step(zero)
+    for e, lim in ((env_dr, p), (env, 0.0)):  # 밀기 직후 base 월드 xy 속도 변화 ∈ [−push_vel, push_vel], z 그대로. dr=False면 0
+        v0 = e.robot.get_vel()
+        e._push(torch.ones(e.num_envs, dtype=torch.bool))
+        dv = (e.robot.get_vel() - v0).abs()
+        assert dv[:, :2].max() <= lim + 1e-6 and dv[:, :2].max() >= 0.75 * lim and dv[:, 2].max() < 1e-6, lim
+    pushed = []  # step은 push_interval_s마다 민다
+    monkeypatch.setattr(env_dr, "_push", lambda m: pushed.append(m.clone()))
+    env_dr.episode_length_buf[:] = round(S2S["dr"]["push_interval_s"] / env_dr.dt) - 1
+    env_dr.step(zero)
+    assert len(pushed) == 1 and pushed[0].all()
+    # IMU 잡음: actor 관측 ang_vel에만 N(0, ang_vel_noise)·스케일, critic(policy_clean)은 참값. dr=False면 0
+    d = env_dr.get_observations()["policy"] - env_dr.get_observations()["policy_clean"]
+    assert S2S["obs"]["order"][0] == "ang_vel" and torch.all(d[:, 3:] == 0)
+    sigma = S2S["dr"]["ang_vel_noise"] * S2S["obs"]["scales"]["ang_vel"]
+    assert abs(d[:, :3].std().item() / sigma - 1.0) < 0.3
+    obs = env.get_observations()
+    assert torch.equal(obs["policy"], obs["policy_clean"])

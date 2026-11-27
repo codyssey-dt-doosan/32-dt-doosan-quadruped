@@ -35,7 +35,7 @@ def test_obs_matches_env(env):
         w, x, y, z = env.base_quat[i].cpu().numpy()  # Genesis wxyz → IMU xyzw
         v, vy, wz = env.commands[i].cpu().numpy()
         assert vy == 0.0  # rl_node는 v_y를 0으로 넣는다(명령 범위 [0, 0])
-        o = build_obs(S2S, env.base_ang_vel[i].cpu().numpy(), projected_gravity([x, y, z, w]), (v, wz),
+        o = build_obs(S2S, env.imu_ang_vel[i].cpu().numpy(),projected_gravity([x, y, z, w]), (v, wz),
                       env.dof_pos[i].cpu().numpy(), env.dof_vel[i].cpu().numpy(), env.actions[i].cpu().numpy())
         assert np.abs(o - ref[i]).max() < 1e-5, i
 

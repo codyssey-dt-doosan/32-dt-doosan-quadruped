@@ -102,3 +102,19 @@ def test_off_terrain_terminates(env):
     assert done.tolist() == [True, True] + [False] * (N_ENVS - 2)
     assert torch.isfinite(rew).all() and torch.isfinite(obs["policy"]).all() and torch.isfinite(obs["privileged"]).all()
     assert torch.allclose(env.robot.get_pos()[:2, :2], env.origins[:2, :2], atol=1e-5)  # 리셋돼 타일로 돌아옴
+
+
+def test_new_terms_finite_on_plane(env):  # B3 보상 항이 plane(DR 켬)·지형 모두 유한, 발 착지(first_contact)가 생긴다
+    init()
+    torch.manual_seed(0)
+    for e in (Go2BoxEnv(N_ENVS, *cfgs.get_cfgs(S2S, dr=True)), env):
+        assert {"feet_air_time", "collision", "torques", "dof_power"} <= e.reward_functions.keys()
+        e.reset()
+        landed = 0
+        for _ in range(50):
+            obs, rew, *_ = e.step(torch.randn((e.num_envs, e.num_actions), dtype=gs.tc_float, device=gs.device))
+            landed += int(e.first_contact.sum())
+            for name, f in e.reward_functions.items():
+                assert torch.isfinite(f()).all(), name
+            assert torch.isfinite(rew).all() and torch.isfinite(obs["policy"]).all()
+        assert landed > 0

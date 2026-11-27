@@ -1,6 +1,7 @@
 # Adapted from Genesis examples/locomotion/go2_env.py (v1.5.0), Apache License 2.0.
 # 바꾼 점: 박스 모델 URDF, dt 0.005 × decimation 4, 물리 스텝 단위 행동 지연, DR(마찰·질량·kp·kd), 목표 관절 한계 클립,
-# 기울기·몸체 접촉 종료, critic용 privileged 관측, 지형 모드(heightfield·terrain_levels_vel). 정합 값은 cfgs.get_cfgs(sim2sim.json)에서만 받는다.
+# 기울기·몸체 접촉 종료, critic용 privileged 관측, 지형 모드(heightfield·terrain_levels_vel), 험지 보상(feet air time·다리 충돌·토크·일률),
+# 밀기·IMU 잡음 DR. 정합 값은 cfgs.get_cfgs(sim2sim.json)에서만 받는다.
 import math
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from genesis.utils.geom import inv_quat, transform_by_quat
 from terrain import make_heightfield
 
 URDF = Path(__file__).resolve().parent / "assets" / "go2_box.urdf"
+CALF_FOOT = (0.0, 0.0, -0.1)  # calf 링크 원점 → 발 구 중심(URDF sphere origin)
 
 
 def gs_rand(lower, upper, batch_shape):
@@ -95,6 +97,14 @@ class Go2BoxEnv:
         self.base_link_idx = base_link.idx  # 접촉 조회용 전역 인덱스
         self.base_link_idx_local = base_link.idx_local
         self.base_mass = float(base_link.get_mass()[0])
+        self.calf_links_idx = [self.robot.get_link(f"{leg}_calf").idx_local for leg in ("FL", "FR", "RL", "RR")]
+        self.calf_foot = torch.tensor(CALF_FOOT, dtype=gs.tc_float, device=gs.device)
+        # 다리 충돌 벌점 대상: thigh·calf 박스 geom(전역 인덱스). 발 구·base 박스(접촉하면 종료)는 뺀다
+        self.leg_box_geoms = torch.tensor(
+            [g.idx for g in self.robot.geoms if g.type == gs.GEOM_TYPE.BOX and g.link.idx != self.base_link_idx],
+            dtype=gs.tc_int, device=gs.device,
+        )
+        self.push_steps = round(self.dr["push_interval_s"] / self.dt)
 
         # PD: τ = kp(q_des − q) − kd·q̇를 ±tau_max로 자른다(Gazebo joint_servo와 같은 식). kp·kd는 _randomize에서 env별로
         tau = torch.full((self.num_actions,), env_cfg["tau_max"], dtype=gs.tc_float, device=gs.device)
@@ -141,6 +151,9 @@ class Go2BoxEnv:
         self.dof_pos = torch.empty_like(self.actions)
         self.dof_vel = torch.empty_like(self.actions)
         self.last_dof_vel = torch.zeros_like(self.actions)
+        self.torques = torch.zeros_like(self.actions)
+        self.feet_air_time = torch.zeros((self.num_envs, 4), dtype=gs.tc_float, device=gs.device)
+        self.first_contact = torch.zeros((self.num_envs, 4), dtype=gs.tc_bool, device=gs.device)
         self.base_pos = torch.empty((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
         self.base_quat = torch.empty((self.num_envs, 4), dtype=gs.tc_float, device=gs.device)
         # DR 표본(env별). latency_k = 4 물리 스텝 중 직전 목표를 유지하는 스텝 수
@@ -200,6 +213,14 @@ class Go2BoxEnv:
         self.robot.set_dofs_kp(self.env_cfg["kp"] * self.kp_scale[idx, None] * ones, self.motors_dof_idx, idx)
         self.robot.set_dofs_kv(self.env_cfg["kd"] * self.kd_scale[idx, None] * ones, self.motors_dof_idx, idx)
 
+    def _push(self, envs_idx):
+        """밀기 DR: 고른 env의 base 월드 xy 속도(free joint dof 0·1)에 env별 U(−push_vel, push_vel)를 더한다."""
+        idx = envs_idx.nonzero()[:, 0]
+        if len(idx):
+            p = self.dr["push_vel"]
+            vel = self.robot.get_dofs_velocity([0, 1], idx)
+            self.robot.set_dofs_velocity(vel + p * (2 * torch.rand_like(vel) - 1), [0, 1], idx)
+
     def _terrain_spawn(self, envs_idx):
         """지형 모드 reset: terrain_levels_vel(Isaac Lab)로 레벨을 옮기고 새 타일 origin 위 base_init_z에 세운다. 스폰 위치 (n, 3).
         타일 반 넘게 가면 +1, 명령 경로의 절반도 못 가면 −1. 최고 레벨을 넘기면 무작위 레벨, 0 아래는 0. 첫 reset은 초기 레벨 그대로."""
@@ -223,6 +244,12 @@ class Go2BoxEnv:
         if self.terrain is None:
             return torch.zeros(xy.shape[:-1], dtype=gs.tc_float, device=gs.device)
         return self.ground.get_terrain_height(torch.clamp(xy, self.hf_lo, self.hf_hi))
+
+    def _feet_height(self):
+        """발 구 중심(calf 링크 원점 + R·CALF_FOOT)의 지면 위 높이 [m] (n, 4), FL·FR·RL·RR."""
+        foot = self.robot.get_links_pos(self.calf_links_idx) + transform_by_quat(
+            self.calf_foot, self.robot.get_links_quat(self.calf_links_idx))
+        return foot[..., 2] - self.ground_height(foot[..., :2])
 
     def _q_des(self, actions):
         # Gazebo rl_node action_to_q와 같은 식: q_nom + s·a를 관절 한계로 자른다
@@ -248,6 +275,12 @@ class Go2BoxEnv:
         self.projected_gravity = transform_by_quat(self.global_gravity, inv_base_quat)
         self.dof_pos = self.robot.get_dofs_position(self.motors_dof_idx)
         self.dof_vel = self.robot.get_dofs_velocity(self.motors_dof_idx)
+        self.torques = self.robot.get_dofs_control_force(self.motors_dof_idx)
+        self.contacts = contacts = self.robot.get_contacts(with_entity=self.ground, is_padded=True)
+        # 발 접지 = 발 구 중심이 지면 위 foot_r + 5 mm 안. first_contact = 공중에 있다 이번 스텝에 닿음(legged_gym)
+        contact = self._feet_height() < self.env_cfg["foot_r"] + 0.005
+        self.first_contact = (self.feet_air_time > 0) & contact
+        self.feet_air_time += self.dt
 
         # compute reward
         self.rew_buf.zero_()
@@ -255,12 +288,14 @@ class Go2BoxEnv:
             rew = reward_func() * self.reward_scales[name]
             self.rew_buf += rew
             self.episode_sums[name] += rew
+        self.feet_air_time *= ~contact
 
         self._resample_commands(self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
+        if self.dr["push_vel"] > 0:  # dr=False면 밀지 않는다
+            self._push(self.episode_length_buf % self.push_steps == 0)
 
         # check termination and reset: 시간 초과, 기울기 > tilt_max(walk_node hold 기준), base_link 지면 접촉, 시뮬 오류,
         # 지형 모드면 타일 영역(border 안쪽) 이탈
-        contacts = self.robot.get_contacts(with_entity=self.ground, is_padded=True)
         base_hit = (contacts["link_a"] == self.base_link_idx) | (contacts["link_b"] == self.base_link_idx)
         self.reset_buf = self.episode_length_buf > self.max_episode_length
         self.reset_buf |= -self.projected_gravity[:, 2] < self.cos_tilt_max
@@ -285,7 +320,8 @@ class Go2BoxEnv:
         return self.get_observations(), self.rew_buf, self.reset_buf, self.extras
 
     def get_observations(self):
-        return TensorDict({"policy": self.obs_buf, "privileged": self.privileged_buf}, batch_size=[self.num_envs])
+        return TensorDict({"policy": self.obs_buf, "policy_clean": self.clean_obs_buf, "privileged": self.privileged_buf},
+                          batch_size=[self.num_envs])
 
     def _reset_idx(self, envs_idx=None):
         # reset state
@@ -305,6 +341,7 @@ class Go2BoxEnv:
             self.actions.zero_()
             self.last_actions.zero_()
             self.last_dof_vel.zero_()
+            self.feet_air_time.zero_()
             self.cmd_path.zero_()
             self.episode_length_buf.zero_()
             self.reset_buf.fill_(True)
@@ -321,6 +358,7 @@ class Go2BoxEnv:
             self.actions.masked_fill_(envs_idx[:, None], 0.0)
             self.last_actions.masked_fill_(envs_idx[:, None], 0.0)
             self.last_dof_vel.masked_fill_(envs_idx[:, None], 0.0)
+            self.feet_air_time.masked_fill_(envs_idx[:, None], 0.0)
             self.cmd_path.masked_fill_(envs_idx, 0.0)
             self.episode_length_buf.masked_fill_(envs_idx, 0)
             self.reset_buf.masked_fill_(envs_idx, True)
@@ -345,9 +383,10 @@ class Go2BoxEnv:
         self._resample_commands(envs_idx)
 
     def _update_observation(self):
-        # actor: sim2sim.json obs.order 순서(45). commands = (v_x, 0, w_z) × 스케일
+        # actor: sim2sim.json obs.order 순서(45). commands = (v_x, 0, w_z) × 스케일. IMU 각속도 = 참값 + N(0, ang_vel_noise)
+        self.imu_ang_vel = self.base_ang_vel + self.dr["ang_vel_noise"] * torch.randn_like(self.base_ang_vel)
         parts = {
-            "ang_vel": self.base_ang_vel * self.obs_scales["ang_vel"],
+            "ang_vel": self.imu_ang_vel * self.obs_scales["ang_vel"],
             "projected_gravity": self.projected_gravity,
             "commands": self.commands * self.commands_scale,
             "dof_pos": (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],
@@ -355,6 +394,8 @@ class Go2BoxEnv:
             "last_action": self.actions,
         }
         self.obs_buf = torch.concatenate([parts[k] for k in self.obs_cfg["order"]], dim=-1)
+        parts["ang_vel"] = self.base_ang_vel * self.obs_scales["ang_vel"]  # critic은 잡음 없는 같은 관측
+        self.clean_obs_buf = torch.concatenate([parts[k] for k in self.obs_cfg["order"]], dim=-1)
         # critic 전용: 참값 선속도, 마찰, 추가 질량
         self.privileged_buf = torch.concatenate(
             (self.base_lin_vel * self.obs_scales["lin_vel"], self.friction[:, None], self.added_mass[:, None]), dim=-1
@@ -392,3 +433,20 @@ class Go2BoxEnv:
         # Penalize base height above ground away from target
         ground = self.ground_height(self.base_pos[:, None, :2])[:, 0]
         return torch.square(self.base_pos[:, 2] - ground - self.reward_cfg["base_height_target"])
+
+    def _reward_feet_air_time(self):
+        # 착지한 발마다 (공중 시간 − 목표), 이동 명령(|v_cmd| > 0.1)일 때만
+        air = torch.sum((self.feet_air_time - self.reward_cfg["feet_air_time_target"]) * self.first_contact, dim=1)
+        return air * (torch.norm(self.commands[:, :2], dim=1) > 0.1)
+
+    def _reward_collision(self):
+        # 지면에 닿은 thigh·calf 박스 geom 수(발 구 제외)
+        c = self.contacts
+        hit = (c["geom_a"][..., None] == self.leg_box_geoms) | (c["geom_b"][..., None] == self.leg_box_geoms)
+        return (hit & c["valid_mask"][..., None]).any(dim=1).sum(dim=1).to(gs.tc_float)
+
+    def _reward_torques(self):
+        return torch.sum(torch.square(self.torques), dim=1)
+
+    def _reward_dof_power(self):
+        return torch.sum(torch.abs(self.torques * self.dof_vel), dim=1)

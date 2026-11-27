@@ -13,9 +13,10 @@ def load_sim2sim() -> dict:
 
 
 def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[dict, dict, dict, dict]:
-    # dr=False: 범위를 공칭값 한 점으로 접는다(지연 0). terrain: None = 평지 plane, get_terrain_cfg() = 지형 커리큘럼
+    # dr=False: 범위를 공칭값 한 점으로 접는다(지연·밀기·IMU 잡음 0). terrain: None = 평지 plane, get_terrain_cfg() = 지형 커리큘럼
     nominal = {"friction": [s2s["nominal"]["mu"]] * 2, "added_mass": [0.0, 0.0], "kp_scale": [1.0, 1.0],
-               "kd_scale": [1.0, 1.0], "latency_steps": [0, 0]}
+               "kd_scale": [1.0, 1.0], "latency_steps": [0, 0], "push_vel": 0.0,
+               "push_interval_s": s2s["dr"]["push_interval_s"], "ang_vel_noise": 0.0}
     env_cfg = {
         "num_actions": len(s2s["joint_names"]),
         "joint_names": s2s["joint_names"],
@@ -30,6 +31,7 @@ def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[d
         "action_scale": s2s["action_scale"],
         "clip_actions": s2s["clip_actions"],
         "tilt_max_deg": s2s["tilt_max_deg"],
+        "foot_r": s2s["foot_r"],
         "base_init_pos": [0.0, 0.0, s2s["base_init_z"]],
         "base_init_quat": [1.0, 0.0, 0.0, 0.0],
         "episode_length_s": 20.0,
@@ -42,6 +44,7 @@ def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[d
         # 명령 최대 0.5 m/s에 맞춰 0.25×0.5²; 0.25면 3 cm/s 오차가 보상 0.4%라 후진이 13~19% 느림
         "tracking_sigma": 0.0625,
         "base_height_target": s2s["base_init_z"],
+        "feet_air_time_target": 0.25,
         "reward_scales": {
             "tracking_lin_vel": 1.0,
             "tracking_ang_vel": 0.2,
@@ -49,6 +52,11 @@ def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[d
             "base_height": -50.0,
             "action_rate": -0.005,
             "similar_to_default": -0.1,
+            # 험지(스펙 §4.2, 시작값): 블라인드 계단엔 feet air time이 사실상 필요
+            "feet_air_time": 1.0,
+            "collision": -1.0,
+            "torques": -1e-4,
+            "dof_power": -2e-5,
         },
     }
     command_cfg = {
@@ -92,8 +100,8 @@ def get_train_cfg(exp_name: str, max_iterations: int) -> dict:
             "distribution_cfg": {"class_name": "GaussianDistribution", "init_std": 1.0, "std_type": "scalar"},
         },
         "critic": {"class_name": "MLPModel", "hidden_dims": [512, 256, 128], "activation": "elu"},
-        # 비대칭: actor는 고유수용감각만, critic은 참값 선속도·마찰·질량을 더 본다
-        "obs_groups": {"actor": ["policy"], "critic": ["policy", "privileged"]},
+        # 비대칭: actor는 고유수용감각만(IMU 잡음 포함), critic은 잡음 없는 같은 관측에 참값 선속도·마찰·질량을 더 본다
+        "obs_groups": {"actor": ["policy"], "critic": ["policy_clean", "privileged"]},
         "num_steps_per_env": 24,
         "save_interval": 100,
         "max_iterations": max_iterations,
