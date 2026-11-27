@@ -29,6 +29,7 @@ setup(
             "balance_node = mpc_controller.balance_node:main",
             "walk_node = mpc_controller.walk_node:main",
             "joint_servo = mpc_controller.joint_servo:main",
+            "rl_node = mpc_controller.rl_node:main",
         ],
     },
 )
