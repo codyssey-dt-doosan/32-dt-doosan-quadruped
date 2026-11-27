@@ -157,6 +157,7 @@ ros2 launch mpc_controller legged.launch.py slope_deg:=15     # 대조군: 개�
 ```bash
 python -m pytest test/ -q -p no:launch_testing -p no:launch_ros
 python3 scripts/patrol_metrics.py --world corridor   # full_system 떠 있는 상태에서 한 바퀴 측정
+python3 scripts/patrol_metrics.py --world unity_plant --timeout 3600   # 경사로 순찰(traversability:=true) — falls·off_ramp(경사로 폭 밖 /odom 샘플)도 출력
 python3 scripts/trot_metrics.py --world corridor --expect-v 0.3 --expect-w 0   # legged.launch.py에 /cmd_vel 걸린 상태에서 추종 측정(인자 없으면 제자리 trot 기준)
 python3 scripts/walk_metrics.py --world corridor --log log/walk_<태그>.log --cmd 0.3 0 15   # walk.launch.py 떠 있는 상태에서 (v,w) 추종(--replay F.csv [--replay-window S D], --slope DEG LEN)
 ```

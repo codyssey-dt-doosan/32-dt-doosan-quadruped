@@ -74,6 +74,7 @@ docker compose -f unity/compose.yaml exec rosbridge bash -lc \
 
 ```bash
 bash unity/tools/start_gazebo_mirror.sh                 # 기본 MODE=legged WORLD=unity_plant
+TRAV=false bash unity/tools/start_gazebo_mirror.sh      # 경사 판정 끔(높이 모드 — 경사로 입구에서 멈춤)
 MODE=walk RTF=0.5 bash unity/tools/start_gazebo_mirror.sh   # SRB MPC + joint_servo (순찰·인지 없이 /cmd_vel만)
 ```
 
@@ -81,10 +82,10 @@ Gazebo(헤드리스)·`full_system`·네이티브 브리지(`ws://127.0.0.1:9090
 
 - 미러는 `WORLD=unity_plant`에서만 맵이 맞는다. corridor·factory는 스폰이 원점이 아니라 Unity 맵 밖에 놓인다(스크립트가 경고).
 - 이 구성은 순찰만 돌린다(`inspection:=false gas_safety:=false`). Unity 카메라·열화상은 대시보드 영상으로만 가고 ROS 점검 노드로는 들어가지 않는다.
-- **순찰은 경사로 입구(x ≈ 7.9 m)에서 멈춘다.** elevation map·MPC가 0.15 m 넘는 높이를 벽으로 봐서 12° 경사로를 장애물로 판단한다(module1 ⑤-2 미구현).
+- **경사로 통과(⑤-2)**: 스크립트는 `WORLD=unity_plant`에서 elevation_map `traversability`를 켠다(`/elevation_map` 값이 높이 대신 막힘 표시, 끄려면 `TRAV=false`). legged + mpc 1랩 3/3 완주(헤드리스 2회 515.6·539.1 s·경사로 이탈 0, Unity Play 동시 1회 sim 370 s·RTF 0.25·막힘 0, 전도 0, 2026-11-27). 웨이포인트 바로 뒤에 벽·기계가 있는 곳(Return_Aisle·Gas_Leak_Approach)에서는 도착 직전 한 프레임 '경로 막힘'이 난다 — 헤딩 스캔 1.5 m가 웨이포인트 너머 벽을 본다. velocity 모드는 경사 뒤 몸체 pitch가 굳어 떠오르므로 경사로 주행에 맞지 않는다.
 - 한 머신에서 Unity HDRP Play를 같이 돌리면 Gazebo RTF가 0.70~0.85에서 0.1 안팎으로 떨어진다(MacBook Air, Unity CPU 약 160%). walk 모드는 이 부하에서 RTF 0.5 기동 중 전도, RTF 0.25에서는 서서 걸었다.
 
-**월드 재생성** — Unity 배치를 바꿨을 때: Play를 끈 상태에서 **Doosan → ROS 2 → Export Gazebo Layout**(Unity 프로젝트 `GazeboLayout/unity_plant_layout.json`) → 저장소 `unity/config/gazebo_layout.json`으로 복사 → `python3 simulation/scripts/unity_layout_to_sdf.py unity/config/gazebo_layout.json`. `simulation/worlds/unity_plant.sdf`와 `patrol_path/config/waypoints_unity_plant.yaml`(`config/inspection_route.json`에서)이 다시 생긴다. 0.1 m 격자로 바닥 높이(경사로·계단·적재물)는 높이 기둥, 바닥 + 0.3~2.3 m를 막는 것은 벽 박스로 만든다. 경사로 그레이팅 구멍은 양쪽 바닥으로 메운다.
+**월드 재생성** — Unity 배치를 바꿨을 때: Play를 끈 상태에서 **Doosan → ROS 2 → Export Gazebo Layout**(Unity 프로젝트 `GazeboLayout/unity_plant_layout.json`) → 저장소 `unity/config/gazebo_layout.json`으로 복사 → `python3 simulation/scripts/unity_layout_to_sdf.py unity/config/gazebo_layout.json`. `simulation/worlds/unity_plant.sdf`와 `patrol_path/config/waypoints_unity_plant.yaml`(`config/inspection_route.json`에서)이 다시 생긴다. 0.1 m 격자로 바닥 높이(계단·적재물)는 높이 기둥, 경사로(5~25° 직사각형 평면)는 기울인 판 하나, 바닥 + 0.3~2.3 m를 막는 것은 벽 박스로 만든다. 경사로 그레이팅 구멍은 양쪽 바닥으로 메운다.
 
 ## 구현 범위
 
