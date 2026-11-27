@@ -3,7 +3,7 @@
   "joint_names": ["FL_hip_joint", "FL_thigh_joint", "FL_calf_joint", "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
                   "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint", "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint"],
   "q_nom": [0.0, 0.407, -1.2, 0.0, 0.407, -1.2, 0.0, 0.407, -1.2, 0.0, 0.407, -1.2],
-  "kp": 20.0, "kd": 0.5,
+  "kp": 20.0, "kd": 0.5, "armature": 0.0,
   "action_scale": 0.25, "clip_actions": 100.0, "tau_max": 30.0,
   "sim_dt": 0.005, "decimation": 4, "policy_hz": 50, "imu_hz": 200,
   "foot_r": 0.02, "base_init_z": 0.335, "tilt_max_deg": 45.0,

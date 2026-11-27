@@ -8,7 +8,7 @@ import numpy as np
 from mpc_controller import sim2sim
 from mpc_controller.balance_node import TAU_MAX
 from mpc_controller.leg_kinematics import Q_NOM
-from mpc_controller.legged_model import JOINTS
+from mpc_controller.legged_model import JOINTS, make_legged_model
 
 REPO = Path(__file__).resolve().parents[3]
 MC = REPO / "module1_locomotion/mpc_controller"
@@ -50,6 +50,14 @@ def test_mass_friction_foot_nominal():
     assert all(lo <= m <= hi for m in [CFG["nominal"]["mu"], *CFG["nominal"]["test_mu"]])
     lo, hi = CFG["dr"]["added_mass"]
     assert lo <= 0.0 <= hi
+
+
+def test_armature_matches_gazebo():  # SDF·walk 변환본에 armature 요소가 없다 → Gazebo/DART 로터 관성 0
+    assert CFG["armature"] == 0.0
+    walk = make_legged_model(GO2_SDF.read_text(encoding="utf-8"), CFG["nominal"]["mu"], 0.0, 0.0,
+                             force_ctrl=True, foot_r=CFG["foot_r"], damping=0.0)
+    for root in (ET.parse(GO2_SDF).getroot(), ET.fromstring(walk)):
+        assert root.find(".//armature") is None
 
 
 def test_obs_dim():

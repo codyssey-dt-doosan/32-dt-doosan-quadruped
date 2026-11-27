@@ -109,6 +109,14 @@ def test_obs_layout(env):
     assert obs["privileged"].shape == (env.num_envs, 5)
 
 
+def test_armature_matches_json(env):  # Genesis URDF 기본 armature 0.1이 아니라 JSON 값(Gazebo 0)
+    assert np.array_equal(env.robot.get_dofs_armature(env.motors_dof_idx).cpu(), np.full((env.num_envs, 12), S2S["armature"]))
+    # calf: 축이 링크 질량 중심이라 질량 행렬 대각 = URDF Iyy 0.003 + armature (기본값이면 0.103)
+    calf = env.motors_dof_idx[2::3]
+    diag = env.robot.get_mass_mat()[0].diagonal()[calf].cpu().numpy()
+    assert np.allclose(diag, 0.003 + S2S["armature"], atol=1e-6)
+
+
 def test_dr_ranges(env_dr):  # dr=True, 64 env
     for key, values in sampled_dr(env_dr).items():
         lo, hi = DR_RANGE[key]

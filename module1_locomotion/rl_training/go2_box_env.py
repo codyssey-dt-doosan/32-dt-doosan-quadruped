@@ -61,8 +61,14 @@ class Go2BoxEnv:
         self.plane = self.scene.add_entity(
             gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True), material=gs.materials.Rigid(friction=0.01)
         )
+        # armature: Genesis URDF 기본값 0.1(로터 관성) 대신 JSON 값 — Gazebo/DART에는 로터 관성이 없다
         self.robot = self.scene.add_entity(
-            gs.morphs.URDF(file=str(URDF), pos=env_cfg["base_init_pos"], quat=env_cfg["base_init_quat"]),
+            gs.morphs.URDF(
+                file=str(URDF),
+                pos=env_cfg["base_init_pos"],
+                quat=env_cfg["base_init_quat"],
+                default_armature=env_cfg["armature"],
+            ),
             material=gs.materials.Rigid(friction=1.0),
         )
 

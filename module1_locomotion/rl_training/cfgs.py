@@ -22,6 +22,7 @@ def get_cfgs(s2s: dict, dr: bool = True) -> tuple[dict, dict, dict, dict]:
         "q_nom": s2s["q_nom"],
         "kp": s2s["kp"],
         "kd": s2s["kd"],
+        "armature": s2s["armature"],
         "tau_max": s2s["tau_max"],
         "sim_dt": s2s["sim_dt"],
         "decimation": s2s["decimation"],
