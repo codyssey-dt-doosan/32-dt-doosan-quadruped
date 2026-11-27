@@ -4,6 +4,11 @@ from pathlib import Path
 
 _OBS_SIZE = {"ang_vel": 3, "projected_gravity": 3, "commands": 3}
 
+# 배포 계약: rl_node가 관측을 만들고 행동을 서보 명령으로 바꿀 때 읽는 키. 다르면 정책이 다른 입출력을 기대한다.
+# 나머지(armature·sim_dt·dr·nominal 등)는 학습 쪽 물리·랜덤화 조건이다.
+CONTRACT = ("joint_names", "q_nom", "kp", "kd", "action_scale", "clip_actions", "policy_hz", "imu_hz",
+            "tilt_max_deg", "obs", "commands")
+
 
 def load(path=None) -> dict:
     if path is None:
@@ -33,3 +38,10 @@ def diff(a, b, prefix="") -> list:
     if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
         return [] if abs(a - b) <= 1e-9 else [prefix]
     return [] if a == b else [prefix]
+
+
+def split_diff(a, b) -> tuple[list, list]:
+    """diff를 (배포 계약 키, 학습 전용 키)로 나눈다."""
+    keys = diff(a, b)
+    contract = [k for k in keys if k.split(".")[0] in CONTRACT]
+    return contract, [k for k in keys if k not in contract]

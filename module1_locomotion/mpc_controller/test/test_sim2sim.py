@@ -70,3 +70,12 @@ def test_diff():
     b["kp"] += 1.0
     b["obs"]["scales"]["ang_vel"] = 0.3
     assert sorted(sim2sim.diff(CFG, b)) == ["kp", "obs.scales.ang_vel"]
+
+
+def test_split_diff_contract_vs_training():
+    assert set(sim2sim.CONTRACT) <= CFG.keys()
+    b = copy.deepcopy(CFG)
+    b["kp"] += 1.0
+    b["dr"]["friction"] = [0.1, 1.2]
+    b["gravity"] = 9.8  # 정책에 없던 학습 전용 키가 생겨도 계약은 그대로
+    assert sim2sim.split_diff(CFG, b) == (["kp"], ["dr.friction", "gravity"])

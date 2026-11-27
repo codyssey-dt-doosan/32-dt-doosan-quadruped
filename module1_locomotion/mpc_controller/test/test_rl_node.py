@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from mpc_controller import sim2sim
+from mpc_controller import rl_policy, sim2sim
 from mpc_controller.balance_node import blend
 from mpc_controller.joint_servo import pack_cmd, unpack_cmd
 from mpc_controller.leg_kinematics import LIMITS
@@ -61,7 +61,12 @@ def test_nonfinite_holds():                      # Review Focus 3
 
 def test_policy_mismatch_lists_keys():           # Review Focus 4
     other = copy.deepcopy(CFG); other["kp"] += 5.0
-    assert sim2sim.diff(other, CFG) == ["kp"]
+    assert sim2sim.split_diff(other, CFG) == (["kp"], [])
+
+
+def test_committed_policy_meets_contract():      # 학습 전용 키를 바꿔도 커밋된 정책은 기동한다(계약 ①)
+    for p in (Path(__file__).resolve().parents[1] / "policies").glob("*.npz"):
+        assert sim2sim.split_diff(rl_policy.load(p)[1], CFG)[0] == [], p.name
 
 
 def test_resolve_policy_missing(tmp_path):       # Review Focus 5

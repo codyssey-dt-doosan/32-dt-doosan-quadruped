@@ -1,7 +1,8 @@
 """PPO 보행 정책(옵트인). Genesis에서 학습한 numpy MLP를 IMU 4틱(sim 50 Hz)마다 돌려 /walk/joint_cmd로 joint_servo에 보낸다.
 
 정합 값(관절 순서·q_nom·kp·kd·action_scale·관측 순서·스케일·명령 범위)은 모두 설치된 sim2sim.json에서 읽고,
-정책 파일에 박힌 사본과 다르면 기동을 거부한다(명령을 안 보내므로 서보 토크 0).
+정책 파일에 박힌 사본과 배포 계약 키(sim2sim.CONTRACT)가 다르면 기동을 거부한다(명령을 안 보내므로 서보 토크 0).
+학습 전용 키(armature·sim_dt·dr 등)만 다르면 경고하고 돈다.
 기동은 balance_node와 같은 램프(0~2 s 관절 PD → 2~3 s kp·kd를 정책 값으로 보간) 후 정책 주도.
 """
 import math
@@ -128,10 +129,12 @@ class RlNode(Node):
             self.get_logger().error(str(e))
             raise SystemExit(1)
         self.policy, policy_cfg = rl_policy.load(path)
-        bad = sim2sim.diff(policy_cfg, self.cfg)
-        if bad:
-            self.get_logger().error(f"정책의 sim2sim이 설치 sim2sim.json과 다름: {', '.join(bad)} — {path}")
+        contract, other = sim2sim.split_diff(policy_cfg, self.cfg)
+        if contract:
+            self.get_logger().error(f"정책의 배포 계약이 설치 sim2sim.json과 다름: {', '.join(contract)} — {path}")
             raise SystemExit(1)
+        if other:
+            self.get_logger().warning(f"정책의 학습 조건이 설치 sim2sim.json과 다름(계속): {', '.join(other)} — {path}")
         try:
             ok = self.policy.act(np.zeros(sim2sim.obs_dim(self.cfg))).shape == (len(JOINTS),)
         except ValueError:
