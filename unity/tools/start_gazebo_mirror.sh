@@ -12,6 +12,8 @@ else
   echo "경고: Unity 미러(Plant_GazeboMirror)는 WORLD=unity_plant에서만 맵이 맞습니다. WORLD=$WORLD는 Gazebo·대시보드 확인용." >&2
 fi
 SLOPE_DEG="${SLOPE_DEG:-0.0}"
+# 경사로 통과 판정(⑤-2): unity_plant는 위층 순찰이라 기본으로 켠다 — 켜면 /elevation_map 값이 막힘 표시
+if [ "$WORLD" = "unity_plant" ]; then TRAV="${TRAV:-true}"; else TRAV="${TRAV:-false}"; fi
 RTF="${RTF:-0.5}"
 
 export PATH="/opt/homebrew/Caskroom/miniforge/base/envs/ros_env/bin:$PATH"
@@ -30,7 +32,7 @@ if [ "$MODE" = "walk" ]; then
   ros2 launch mpc_controller walk.launch.py gui:=false "world:=$WORLD" "slope_deg:=$SLOPE_DEG" "real_time_factor:=$RTF" &
 else
   echo "=== Starting Gazebo Headless + Full System 12-DoF Legged + MPC (full_system.launch.py locomotion:=legged world:=$WORLD) ==="
-  ros2 launch simulation full_system.launch.py gui:=false locomotion:=legged inspection:=false gas_safety:=false "world:=$WORLD" &
+  ros2 launch simulation full_system.launch.py gui:=false locomotion:=legged inspection:=false gas_safety:=false "world:=$WORLD" "traversability:=$TRAV" &
 fi
 GZ_PID=$!
 
