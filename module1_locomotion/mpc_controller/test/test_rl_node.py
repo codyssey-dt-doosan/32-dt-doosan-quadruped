@@ -12,7 +12,7 @@ from mpc_controller.joint_servo import pack_cmd, unpack_cmd
 from mpc_controller.leg_kinematics import LIMITS
 from mpc_controller.legged_model import JOINTS
 from mpc_controller.rl_node import (action_to_q, build_obs, cmd_or_zero, joints_by_name, projected_gravity,
-                                    resolve_policy, rl_supervise, startup_gains)
+                                    resolve_policy, rl_supervise, startup_gains, status_line)
 
 CFG = sim2sim.load(Path(__file__).resolve().parents[1] / "config/sim2sim.json")
 
@@ -22,6 +22,8 @@ def test_joints_by_name_reorders_and_rejects_missing():
     q, qd = joints_by_name(names, pos, [])
     assert np.allclose(q, pos[::-1]) and np.allclose(qd, 0.0)
     assert joints_by_name(names[:-1], pos[:-1], []) is None
+    assert joints_by_name(names, pos, np.ones(12))[1].tolist() == [1.0] * 12
+    assert joints_by_name(names, pos, np.ones(5)) is None      # 속도 길이 불일치는 버린다
 
 
 def test_projected_gravity():
@@ -65,6 +67,21 @@ def test_policy_mismatch_lists_keys():           # Review Focus 4
 def test_resolve_policy_missing(tmp_path):       # Review Focus 5
     with pytest.raises(FileNotFoundError, match="policy:="):
         resolve_policy("", tmp_path)
+    with pytest.raises(FileNotFoundError, match="policy:="):
+        resolve_policy("flat_v3.npz", tmp_path)
+
+
+def test_resolve_policy_name_or_path(tmp_path):
+    (tmp_path / "policies").mkdir(); (tmp_path / "policies" / "a.npz").write_bytes(b"x")
+    (tmp_path / "b.npz").write_bytes(b"x")
+    assert resolve_policy("a.npz", tmp_path) == tmp_path / "policies" / "a.npz"
+    assert resolve_policy(str(tmp_path / "b.npz"), tmp_path) == tmp_path / "b.npz"
+
+
+def test_status_line_without_servo_is_not_zero():  # 0이면 서보가 안 떠도 walk_metrics가 통과
+    line = status_line("run", (0.2, 0.3), 0, None, 0.5)
+    assert "sat=99 " in line and "servo_stale=99 " in line
+    assert "sat=3 " in status_line("run", (0.2, 0.3), 0, [3, 0, 0, 1.0, 3.1, 4.0, 0.5], 0.5)
 
 
 def test_cmd_roundtrip_layout():

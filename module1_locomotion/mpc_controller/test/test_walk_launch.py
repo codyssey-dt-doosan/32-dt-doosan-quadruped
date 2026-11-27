@@ -22,7 +22,7 @@ def default_text(arg):
 def test_controller_default_is_mpc():
     ld = load_launch(LAUNCH).generate_launch_description()
     args = {e.name: e for e in ld.entities if isinstance(e, DeclareLaunchArgument)}
-    assert default_text(args["controller"]) == "mpc" and default_text(args["policy"]) == ""
+    assert default_text(args["controller"]) == "mpc" and default_text(args["policy"]) == "flat_v3.npz"
 
 
 def test_controller_rejects_unknown_value():

@@ -92,7 +92,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("world", default_value="corridor"),
             DeclareLaunchArgument("gui", default_value="true"),
             DeclareLaunchArgument("controller", default_value="mpc", description="mpc(walk_node) | rl(rl_node, 옵트인)"),
-            DeclareLaunchArgument("policy", default_value="", description="controller:=rl 정책 .npz 경로, 비우면 share/policies 최신"),
+            DeclareLaunchArgument("policy", default_value="flat_v3.npz", description="controller:=rl 정책: share/policies 안 파일 이름 또는 .npz 경로"),
             DeclareLaunchArgument("mu", default_value="0.8", description="다리·발 충돌 마찰"),
             DeclareLaunchArgument("slope_deg", default_value="0.0", description="스폰 앞 2 m 오르막·평지·내리막 경사(0이면 없음)"),
             DeclareLaunchArgument("slope_len", default_value="3.0", description="오르막·내리막 길이 m"),

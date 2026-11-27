@@ -31,7 +31,9 @@ Q_HI = np.array([hi for _, hi in LIMITS] * 4)
 
 
 def joints_by_name(names, pos, vel):
-    """JOINTS 순서로 재정렬. 하나라도 없으면 None, 속도가 없으면 0."""
+    """JOINTS 순서로 재정렬. 하나라도 없거나 속도 길이가 0·len(names) 둘 다 아니면 None, 속도가 없으면 0."""
+    if len(vel) not in (0, len(names)):
+        return None
     p, v = dict(zip(names, pos)), dict(zip(names, vel))
     if any(j not in p for j in JOINTS):
         return None
@@ -94,22 +96,20 @@ def rl_supervise(tilt_deg, imu_age_s, joint_age_s, finite, cfg) -> str:
 
 
 def resolve_policy(path: str, share_dir: Path) -> Path:
-    """path가 비면 share_dir/policies/*.npz 중 이름순 마지막."""
-    if path:
-        p = Path(path)
-    else:
-        found = sorted((share_dir / "policies").glob("*.npz"))
-        p = found[-1] if found else share_dir / "policies" / "*.npz"
+    """폴더 없는 파일 이름이면 share_dir/policies/ 안, 아니면 그 경로."""
+    p = Path(path)
+    if p.name == path:
+        p = share_dir / "policies" / path
     if not p.is_file():
         raise FileNotFoundError(
-            f"정책 파일 없음: {p} — rl_training/export.py로 만든 .npz를 mpc_controller/policies/에 두고 다시 빌드하거나 policy:=<경로>"
+            f"정책 파일 없음: {p} — rl_training/export.py로 만든 .npz를 mpc_controller/policies/에 두고 다시 빌드하거나 policy:=<파일 이름|경로>"
         )
     return p
 
 
 def status_line(mode: str, inf_ms: tuple, fail: int, servo, tilt: float) -> str:
-    """servo = /joint_servo/status [sat, stale, reject, gap_p50, gap_p99, gap_max, lat_p99], None이면 0."""
-    s = servo or [0.0] * 7
+    """servo = /joint_servo/status [sat, stale, reject, gap_p50, gap_p99, gap_max, lat_p99]. None(아직 안 옴)이면 sat·stale 99 → 실측 FAIL."""
+    s = servo or [99.0, 99.0] + [0.0] * 5
     return (
         f"status mode={mode} inf_ms={inf_ms[0]:.2f}/{inf_ms[1]:.2f} fail={fail} sat={int(s[0])} tilt={tilt:.2f} "
         f"servo_gap_ms={s[3]:.1f}/{s[4]:.1f}/{s[5]:.1f} servo_stale={int(s[1])} servo_reject={int(s[2])} servo_lat_ms={s[6]:.1f}"
@@ -119,7 +119,7 @@ def status_line(mode: str, inf_ms: tuple, fail: int, servo, tilt: float) -> str:
 class RlNode(Node):
     def __init__(self) -> None:
         super().__init__("rl")
-        p = self.declare_parameters("", [("world", "corridor"), ("policy", ""), ("start_delay", 3.0)])
+        p = self.declare_parameters("", [("world", "corridor"), ("policy", "flat_v3.npz"), ("start_delay", 3.0)])
         self.p = {d.name: d.value for d in p}
         self.cfg = sim2sim.load()
         try:
