@@ -1,14 +1,36 @@
 """PPO 학습. 사용: python train.py -e EXP [-b 4096] [--max-iterations N] [--log-dir DIR] [--resume] [--save-interval 50] [--cpu]
-실행 폴더 = <log-dir>/<EXP>. 같은 실험명이 있으면 지우지 않고 거부한다(--resume로 이어 학습)."""
+실행 폴더 = <log-dir>/<EXP>. 같은 실험명이 있으면 지우지 않고 거부한다(--resume로 이어 학습).
+--resume은 sim2sim.json과 학습 코드(provenance.json)가 run 시작 때와 같을 때만 이어 간다."""
 import argparse
+import hashlib
 import json
 import os
 import pickle
 import re
+import subprocess
 from pathlib import Path
 
 import cfgs
-from export import drift, make_runner
+from export import drift, git_head, make_runner
+
+HERE = Path(__file__).resolve().parent
+CODE = ("go2_box_env.py", "cfgs.py", "train.py", "assets/go2_box.urdf")  # 바뀌면 같은 run을 이어 학습하지 않는다(보상·PPO·env 식·동역학)
+
+
+def provenance() -> dict:
+    """학습 출처: 저장소 HEAD, 추적 파일 미커밋 변경 여부, 학습 코드 sha256."""
+    r = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=HERE, capture_output=True, text=True)
+    return {"git": git_head(), "dirty": r.returncode != 0 or bool(r.stdout.strip()),
+            "code": {f: hashlib.sha256((HERE / f).read_bytes()).hexdigest() for f in CODE}}
+
+
+def code_drift(run_dir) -> list:
+    """run 시작 때 남긴 provenance.json과 지금 학습 코드가 다른 파일. 기록이 없으면 그 사실을 돌려준다."""
+    p = Path(run_dir) / "provenance.json"
+    if not p.exists():
+        return ["provenance.json 없음"]
+    saved, now = json.loads(p.read_text())["code"], provenance()["code"]
+    return sorted(f for f in saved.keys() | now.keys() if saved.get(f) != now.get(f))
 
 
 def default_log_dir() -> Path:
@@ -43,8 +65,9 @@ def main():
 
     run_dir = a.log_dir / a.exp_name
     ckpt = prepare_log_dir(run_dir, a.resume)
-    if ckpt is not None and (keys := drift(run_dir)):
-        raise SystemExit(f"sim2sim.json이 학습 때와 다르다: {', '.join(keys)}")
+    if ckpt is not None and (keys := drift(run_dir) + code_drift(run_dir)):
+        raise SystemExit(f"run 시작 때와 다르다(sim2sim.json·학습 코드): {', '.join(keys)} — "
+                         f"provenance.json의 git 커밋으로 맞추거나 새 -e로 시작")
 
     train_cfg = cfgs.get_train_cfg(a.exp_name, a.max_iterations)
     train_cfg["save_interval"] = a.save_interval
@@ -54,6 +77,7 @@ def main():
         with open(run_dir / "cfgs.pkl", "wb") as f:
             pickle.dump([env.env_cfg, env.obs_cfg, env.reward_cfg, env.command_cfg, runner.cfg], f)
         (run_dir / "sim2sim.json").write_text(json.dumps(cfgs.load_sim2sim(), indent=2))
+        (run_dir / "provenance.json").write_text(json.dumps(provenance(), indent=2))
     else:
         print(f"resume {ckpt}")
         runner.load(str(ckpt), map_location=runner.device)  # Colab(CUDA) 체크포인트를 맥에서 이어도 되게

@@ -1,5 +1,6 @@
 """체크포인트 actor → numpy npz(rl_policy 형식). 사용: python export.py --run-dir DIR --ckpt model_N.pt --out PATH.npz"""
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -70,7 +71,10 @@ def main(argv=None) -> int:
     runner = make_runner(num_envs=1, cpu=True, dr=False)
     runner.load(str(a.run_dir / a.ckpt), map_location="cpu")
     a.out.parent.mkdir(parents=True, exist_ok=True)
-    meta = {"run": a.run_dir.resolve().name, "ckpt": a.ckpt, "iteration": runner.current_learning_iteration, "git": git_head()}
+    prov = a.run_dir / "provenance.json"  # train.py가 run 시작 때 남긴 학습 출처(옛 run엔 없다)
+    train = json.loads(prov.read_text()) if prov.exists() else {}
+    meta = {"run": a.run_dir.resolve().name, "ckpt": a.ckpt, "iteration": runner.current_learning_iteration, "git": git_head(),
+            "train_git": train.get("git", "unknown"), "train_dirty": train.get("dirty")}
     export_actor(runner, cfgs.load_sim2sim(), a.out, meta)
     print(f"{a.out} {a.out.stat().st_size / 1e6:.2f} MB {meta}")
     return 0

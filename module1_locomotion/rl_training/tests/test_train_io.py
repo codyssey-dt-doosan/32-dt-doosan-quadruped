@@ -1,4 +1,5 @@
-"""train.py 로그 폴더 처리: 같은 실험명은 지우지 않고 거부, --resume는 마지막 체크포인트."""
+"""train.py 로그 폴더 처리: 같은 실험명은 지우지 않고 거부, --resume는 마지막 체크포인트, 학습 코드가 바뀌면 resume 거부."""
+import json
 import sys
 from pathlib import Path
 
@@ -6,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from train import default_log_dir, prepare_log_dir  # noqa: E402
+from train import CODE, code_drift, default_log_dir, prepare_log_dir, provenance  # noqa: E402
 
 
 def test_prepare_log_dir_refuses_existing(tmp_path):          # Review Focus 1
@@ -34,3 +35,14 @@ def test_default_log_dir_ignores_cwd(tmp_path, monkeypatch):  # 저장소 루트
     assert default_log_dir() == Path(__file__).resolve().parents[1] / "logs"
     monkeypatch.setenv("RL_LOG_DIR", str(tmp_path / "x"))
     assert default_log_dir() == tmp_path / "x"
+
+
+def test_code_drift_refuses_changed_training_code(tmp_path):  # 코랩 재연결 사이 push로 보상·env가 바뀐 채 이어 학습하지 않게
+    assert code_drift(tmp_path) == ["provenance.json 없음"]
+    p = provenance()
+    assert set(p["code"]) == set(CODE) and p["git"] and isinstance(p["dirty"], bool)
+    (tmp_path / "provenance.json").write_text(json.dumps(p))
+    assert code_drift(tmp_path) == []
+    p["code"]["cfgs.py"] = "0" * 64
+    (tmp_path / "provenance.json").write_text(json.dumps(p))
+    assert code_drift(tmp_path) == ["cfgs.py"]
