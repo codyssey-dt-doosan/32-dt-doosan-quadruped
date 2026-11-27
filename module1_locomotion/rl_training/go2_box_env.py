@@ -1,6 +1,6 @@
 # Adapted from Genesis examples/locomotion/go2_env.py (v1.5.0), Apache License 2.0.
 # 바꾼 점: 박스 모델 URDF, dt 0.005 × decimation 4, 물리 스텝 단위 행동 지연, DR(마찰·질량·kp·kd), 목표 관절 한계 클립,
-# 기울기·몸체 접촉 종료, critic용 privileged 관측. 정합 값은 cfgs.get_cfgs(sim2sim.json)에서만 받는다.
+# 기울기·몸체 접촉 종료, critic용 privileged 관측, 지형 모드(heightfield·terrain_levels_vel). 정합 값은 cfgs.get_cfgs(sim2sim.json)에서만 받는다.
 import math
 from pathlib import Path
 
@@ -9,6 +9,8 @@ from tensordict import TensorDict
 
 import genesis as gs
 from genesis.utils.geom import inv_quat, transform_by_quat
+
+from terrain import make_heightfield
 
 URDF = Path(__file__).resolve().parent / "assets" / "go2_box.urdf"
 
@@ -58,9 +60,18 @@ class Go2BoxEnv:
         )
 
         # 접촉 마찰 = max(두 geom) → 바닥은 하한 0.01, 로봇 geom 1.0 × env별 비율이 실효 마찰이 된다
-        self.plane = self.scene.add_entity(
-            gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True), material=gs.materials.Rigid(friction=0.01)
-        )
+        self.terrain = env_cfg["terrain"]
+        if self.terrain is None:
+            self.ground = self.plane = self.scene.add_entity(
+                gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True), material=gs.materials.Rigid(friction=0.01)
+            )
+        else:  # heightfield 하나(행 = 난이도 x, 열 = 타입 y, 꼭짓점 (i, j) = 월드 (i·hs, j·hs))
+            t = self.terrain
+            hf, tile_origins = make_heightfield(t)
+            self.ground = self.scene.add_entity(
+                gs.morphs.Terrain(height_field=hf / t["vs"], horizontal_scale=t["hs"], vertical_scale=t["vs"], pos=(0, 0, 0)),
+                material=gs.materials.Rigid(friction=0.01),
+            )
         # armature: Genesis URDF 기본값 0.1(로터 관성) 대신 JSON 값 — Gazebo/DART에는 로터 관성이 없다
         self.robot = self.scene.add_entity(
             gs.morphs.URDF(
@@ -138,6 +149,17 @@ class Go2BoxEnv:
         self.kp_scale = torch.empty_like(self.friction)
         self.kd_scale = torch.empty_like(self.friction)
         self.latency_k = torch.empty((self.num_envs,), dtype=gs.tc_int, device=gs.device)
+        self.cmd_path = torch.zeros_like(self.friction)  # 에피소드 동안 |v_cmd|·dt 누적(커리큘럼 내려가기 기준)
+        if self.terrain is not None:
+            # 초기 레벨 0~max_init_level, 타입(열)은 env를 고르게 나눈다
+            self.tile_origins = torch.tensor(tile_origins, dtype=gs.tc_float, device=gs.device)
+            self.levels = torch.randint(0, min(t["max_init_level"], t["rows"] - 1) + 1, (self.num_envs,), dtype=gs.tc_int, device=gs.device)
+            self.types = (torch.arange(self.num_envs, device=gs.device) * len(t["cols"]) // self.num_envs).to(gs.tc_int)
+            self.origins = self.tile_origins[self.levels, self.types]
+            self.hf_lo = torch.zeros(2, dtype=gs.tc_float, device=gs.device)
+            self.hf_hi = torch.tensor([(s - 1) * t["hs"] for s in hf.shape], dtype=gs.tc_float, device=gs.device)
+            self.inner_hi = torch.tensor([t["border"] + t["rows"] * t["tile"], t["border"] + len(t["cols"]) * t["tile"]],
+                                         dtype=gs.tc_float, device=gs.device)  # border 안쪽 = 타일 영역
         self.extras = dict()  # extra information for logging
 
         self.reward_functions, self.episode_sums = dict(), dict()
@@ -178,6 +200,30 @@ class Go2BoxEnv:
         self.robot.set_dofs_kp(self.env_cfg["kp"] * self.kp_scale[idx, None] * ones, self.motors_dof_idx, idx)
         self.robot.set_dofs_kv(self.env_cfg["kd"] * self.kd_scale[idx, None] * ones, self.motors_dof_idx, idx)
 
+    def _terrain_spawn(self, envs_idx):
+        """지형 모드 reset: terrain_levels_vel(Isaac Lab)로 레벨을 옮기고 새 타일 origin 위 base_init_z에 세운다. 스폰 위치 (n, 3).
+        타일 반 넘게 가면 +1, 명령 경로의 절반도 못 가면 −1. 최고 레벨을 넘기면 무작위 레벨, 0 아래는 0. 첫 reset은 초기 레벨 그대로."""
+        if envs_idx is not None:
+            dist = torch.norm(self.base_pos[:, :2] - self.origins[:, :2], dim=1)
+            up = dist > self.terrain["tile"] / 2
+            down = (dist < 0.5 * self.cmd_path) & ~up
+            levels = self.levels + up.to(gs.tc_int) - down.to(gs.tc_int)
+            rows = self.terrain["rows"]
+            levels = torch.where(levels >= rows, torch.randint_like(levels, rows), levels.clamp(min=0))
+            self.levels = torch.where(envs_idx, levels, self.levels)
+        self.origins = self.tile_origins[self.levels, self.types]
+        spawn = self.origins + self.init_base_pos
+        idx = torch.arange(self.num_envs, device=gs.device) if envs_idx is None else envs_idx.nonzero()[:, 0]
+        if len(idx):
+            self.robot.set_pos(spawn[idx], envs_idx=idx, zero_velocity=True)
+        return spawn
+
+    def ground_height(self, xy):
+        """월드 xy (n, k, 2)의 지면 높이 [m] (n, k). plane이면 0. 지형은 heightfield 범위로 잘라 조회한다(밖이면 NaN이라)."""
+        if self.terrain is None:
+            return torch.zeros(xy.shape[:-1], dtype=gs.tc_float, device=gs.device)
+        return self.ground.get_terrain_height(torch.clamp(xy, self.hf_lo, self.hf_hi))
+
     def _q_des(self, actions):
         # Gazebo rl_node action_to_q와 같은 식: q_nom + s·a를 관절 한계로 자른다
         return torch.clamp(self.default_dof_pos + self.env_cfg["action_scale"] * actions, self.dof_lower, self.dof_upper)
@@ -193,6 +239,7 @@ class Go2BoxEnv:
 
         # update buffers
         self.episode_length_buf += 1
+        self.cmd_path += torch.norm(self.commands[:, :2], dim=1) * self.dt
         self.base_pos = self.robot.get_pos()
         self.base_quat = self.robot.get_quat()
         inv_base_quat = inv_quat(self.base_quat)
@@ -211,13 +258,17 @@ class Go2BoxEnv:
 
         self._resample_commands(self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
 
-        # check termination and reset: 시간 초과, 기울기 > tilt_max(walk_node hold 기준), base_link 지면 접촉, 시뮬 오류
-        contacts = self.robot.get_contacts(with_entity=self.plane, is_padded=True)
+        # check termination and reset: 시간 초과, 기울기 > tilt_max(walk_node hold 기준), base_link 지면 접촉, 시뮬 오류,
+        # 지형 모드면 타일 영역(border 안쪽) 이탈
+        contacts = self.robot.get_contacts(with_entity=self.ground, is_padded=True)
         base_hit = (contacts["link_a"] == self.base_link_idx) | (contacts["link_b"] == self.base_link_idx)
         self.reset_buf = self.episode_length_buf > self.max_episode_length
         self.reset_buf |= -self.projected_gravity[:, 2] < self.cos_tilt_max
         self.reset_buf |= (base_hit & contacts["valid_mask"]).any(dim=-1)
         self.reset_buf |= self.scene.get_error_envs_mask()
+        if self.terrain is not None:
+            xy = self.base_pos[:, :2]
+            self.reset_buf |= ((xy < self.terrain["border"]) | (xy > self.inner_hi)).any(dim=-1)
 
         # Compute timeout
         self.extras["time_outs"] = (self.episode_length_buf > self.max_episode_length).to(dtype=gs.tc_float)
@@ -239,11 +290,12 @@ class Go2BoxEnv:
     def _reset_idx(self, envs_idx=None):
         # reset state
         self.robot.set_qpos(self.init_qpos, envs_idx=envs_idx, zero_velocity=True)
+        spawn = self.init_base_pos if self.terrain is None else self._terrain_spawn(envs_idx)
         self._randomize(envs_idx)
 
         # reset buffers
         if envs_idx is None:
-            self.base_pos.copy_(self.init_base_pos)
+            self.base_pos.copy_(spawn)
             self.base_quat.copy_(self.init_base_quat)
             self.projected_gravity.copy_(self.init_projected_gravity)
             self.dof_pos.copy_(self.default_dof_pos)
@@ -253,10 +305,11 @@ class Go2BoxEnv:
             self.actions.zero_()
             self.last_actions.zero_()
             self.last_dof_vel.zero_()
+            self.cmd_path.zero_()
             self.episode_length_buf.zero_()
             self.reset_buf.fill_(True)
         else:
-            torch.where(envs_idx[:, None], self.init_base_pos, self.base_pos, out=self.base_pos)
+            torch.where(envs_idx[:, None], spawn, self.base_pos, out=self.base_pos)
             torch.where(envs_idx[:, None], self.init_base_quat, self.base_quat, out=self.base_quat)
             torch.where(
                 envs_idx[:, None], self.init_projected_gravity, self.projected_gravity, out=self.projected_gravity
@@ -268,6 +321,7 @@ class Go2BoxEnv:
             self.actions.masked_fill_(envs_idx[:, None], 0.0)
             self.last_actions.masked_fill_(envs_idx[:, None], 0.0)
             self.last_dof_vel.masked_fill_(envs_idx[:, None], 0.0)
+            self.cmd_path.masked_fill_(envs_idx, 0.0)
             self.episode_length_buf.masked_fill_(envs_idx, 0)
             self.reset_buf.masked_fill_(envs_idx, True)
 
@@ -284,6 +338,8 @@ class Go2BoxEnv:
                 value.zero_()
             else:
                 value.masked_fill_(envs_idx, 0.0)
+        if self.terrain is not None:
+            self.extras["episode"]["terrain_level"] = self.levels.to(gs.tc_float).mean()
 
         # random sample command upon reset
         self._resample_commands(envs_idx)
@@ -333,5 +389,6 @@ class Go2BoxEnv:
         return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1)
 
     def _reward_base_height(self):
-        # Penalize base height away from target
-        return torch.square(self.base_pos[:, 2] - self.reward_cfg["base_height_target"])
+        # Penalize base height above ground away from target
+        ground = self.ground_height(self.base_pos[:, None, :2])[:, 0]
+        return torch.square(self.base_pos[:, 2] - ground - self.reward_cfg["base_height_target"])

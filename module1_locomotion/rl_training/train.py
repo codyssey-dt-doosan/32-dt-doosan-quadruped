@@ -1,4 +1,4 @@
-"""PPO 학습. 사용: python train.py -e EXP [-b 4096] [--max-iterations N] [--log-dir DIR] [--resume] [--save-interval 50] [--cpu]
+"""PPO 학습. 사용: python train.py -e EXP [-b 4096] [--max-iterations N] [--log-dir DIR] [--resume] [--save-interval 50] [--cpu] [--terrain]
 실행 폴더 = <log-dir>/<EXP>. 같은 실험명이 있으면 지우지 않고 거부한다(--resume로 이어 학습).
 --resume은 sim2sim.json과 학습 코드(provenance.json)가 run 시작 때와 같을 때만 이어 간다."""
 import argparse
@@ -15,7 +15,7 @@ from export import drift, git_head, make_runner
 
 HERE = Path(__file__).resolve().parent
 # 바뀌면 같은 run을 이어 학습하지 않는다(보상·PPO·env 식·동역학, make_runner의 gs.init, Genesis·rsl_rl 버전)
-CODE = ("go2_box_env.py", "cfgs.py", "train.py", "export.py", "assets/go2_box.urdf", "requirements.txt")
+CODE = ("go2_box_env.py", "cfgs.py", "terrain.py", "train.py", "export.py", "assets/go2_box.urdf", "requirements.txt")
 
 
 def provenance() -> dict:
@@ -62,6 +62,7 @@ def main():
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--save-interval", type=int, default=50)
     ap.add_argument("--cpu", action="store_true")
+    ap.add_argument("--terrain", action="store_true", help="지형 커리큘럼(cfgs.get_terrain_cfg), 없으면 평지")
     a = ap.parse_args()
 
     prov, s2s = provenance(), cfgs.load_sim2sim()  # Genesis 빌드(수십 초) 전, 이 프로세스가 import한 코드 기준
@@ -73,7 +74,8 @@ def main():
 
     train_cfg = cfgs.get_train_cfg(a.exp_name, a.max_iterations)
     train_cfg["save_interval"] = a.save_interval
-    runner = make_runner(a.num_envs, a.cpu, dr=True, log_dir=str(run_dir), train_cfg=train_cfg)
+    runner = make_runner(a.num_envs, a.cpu, dr=True, log_dir=str(run_dir), train_cfg=train_cfg,
+                         terrain=cfgs.get_terrain_cfg() if a.terrain else None)  # env_cfg["terrain"]
     if ckpt is None:
         env = runner.env
         with open(run_dir / "cfgs.pkl", "wb") as f:

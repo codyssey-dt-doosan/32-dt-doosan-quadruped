@@ -12,8 +12,8 @@ def load_sim2sim() -> dict:
     return sim2sim.load(REPO / "module1_locomotion" / "mpc_controller" / "config" / "sim2sim.json")
 
 
-def get_cfgs(s2s: dict, dr: bool = True) -> tuple[dict, dict, dict, dict]:
-    # dr=False: 범위를 공칭값 한 점으로 접는다(지연 0)
+def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[dict, dict, dict, dict]:
+    # dr=False: 범위를 공칭값 한 점으로 접는다(지연 0). terrain: None = 평지 plane, get_terrain_cfg() = 지형 커리큘럼
     nominal = {"friction": [s2s["nominal"]["mu"]] * 2, "added_mass": [0.0, 0.0], "kp_scale": [1.0, 1.0],
                "kd_scale": [1.0, 1.0], "latency_steps": [0, 0]}
     env_cfg = {
@@ -35,6 +35,7 @@ def get_cfgs(s2s: dict, dr: bool = True) -> tuple[dict, dict, dict, dict]:
         "episode_length_s": 20.0,
         "resampling_time_s": 4.0,
         "dr": s2s["dr"] if dr else nominal,
+        "terrain": terrain,
     }
     obs_cfg = {"order": s2s["obs"]["order"], "obs_scales": dict(s2s["obs"]["scales"])}
     reward_cfg = {
