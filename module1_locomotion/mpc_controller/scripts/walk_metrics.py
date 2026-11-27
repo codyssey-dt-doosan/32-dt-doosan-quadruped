@@ -80,11 +80,26 @@ def log_stats(path: str) -> dict:
     if lines:
         st.update(servo_stats(lines))
         m = re.search(r"ik_fail=(\d+) ik_clamp=(\d+) phase=([\d.]+) active=(\d)", lines[-1])
-        st.update({"ik_fail": int(m.group(1)), "ik_clamp": int(m.group(2)), "active": int(m.group(4))})
+        if m:
+            st.update({"ik_fail": int(m.group(1)), "ik_clamp": int(m.group(2)), "active": int(m.group(4))})
         t = re.search(r"td_ms=(\S+) scuff=(\d+) hjump=(\d+)", lines[-1])
         if t:
             st.update({"td_ms": t.group(1), "scuff": int(t.group(2)), "hjump": int(t.group(3))})
     return st
+
+
+def compute_ok(st: dict) -> bool:
+    """추론/QP 시간 판정 — qp_ms(MPC) 또는 inf_ms(rl) 중 있는 것. 둘 다 없으면 False."""
+    if "qp_ms" in st:
+        return st["qp_ms"] < 5.0 and st["qp_p99"] < 10.0
+    if "inf_ms" in st:
+        return st["inf_ms"] < 5.0 and st["inf_p99"] < 10.0
+    return False
+
+
+def track_floor(v_cmd: float, w_cmd: float, v_meas: float, w_meas: float, frac: float = 0.5) -> bool:
+    """G2 최소 추종: 0이 아닌 명령 성분마다 명령 방향 실측이 frac·|cmd| 이상."""
+    return all(c == 0 or m * math.copysign(1, c) >= frac * abs(c) for c, m in ((v_cmd, v_meas), (w_cmd, w_meas)))
 
 
 def _publish(v: float, w: float, seconds: float) -> None:
@@ -266,8 +281,9 @@ def main() -> int:
         st = log_stats(a.log)
         fell = any(q[3] > 45.0 for q in rows)
         ok = st.get("mode") == "run" and st.get("hold", 1) == 0 and st.get("fail", 99) <= MPC_WARMUP_FAILS and st.get("sat", 99) <= SAT_MAX
-        ok &= st.get("qp_ms", 9) < 5.0 and st.get("qp_p99", 99) < 10.0 and not fell
+        ok &= compute_ok(st) and not fell
         ok &= st.get("servo_stale", 0) == 0
+        common = ok
         out = f"n={len(rows)} fell={fell} " + " ".join(f"{k}={v}" for k, v in st.items())
         if a.cmd:
             m = velocity_track(rows, v, w, a.after)
@@ -294,6 +310,9 @@ def main() -> int:
             ok &= e["n_win"] > 0 and e["rms_v"] < 0.05 and e["rms_w"] < 0.10 and e["end_err"] < 0.10 * e["path_len"]
         print(out)
         print("PASS" if ok else "FAIL")
+        if a.cmd and not a.slope:
+            gate = common and track_floor(v, w, m["v_meas"], m["w_meas"])
+            print("GATE PASS" if gate else "GATE FAIL")
         return 0 if ok else 1
     finally:
         if a.replay and a.replay_window:

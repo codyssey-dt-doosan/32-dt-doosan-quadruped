@@ -54,16 +54,18 @@ def log_stats(path: str) -> dict:
     lines = [l for l in all_lines if "status mode=" in l]
     if not lines:
         return {}
-    m = re.search(
-        r"mode=(\w+) qp_ms=([\d.]+)/([\d.]+) fail=(\d+) sat=(\d+) sum_fz=([-\d.]+) sum_fn=([-\d.]+) sum_ft=([-\d.]+) "
-        r"calf_min=([-\d.]+)",
-        lines[-1],
-    )
-    return {
-        "mode": m.group(1), "qp_ms": float(m.group(2)), "qp_p99": float(m.group(3)), "fail": int(m.group(4)),
-        "sat": int(m.group(5)), "sum_fz": float(m.group(6)), "sum_fn": float(m.group(7)), "sum_ft": float(m.group(8)),
-        "calf_min": float(m.group(9)), "hold": hold,
-    }
+    # 아는 키만 있는 대로 읽는다 (MPC는 qp_ms, rl은 inf_ms)
+    line, st = lines[-1], {}
+    if m := re.search(r"\bmode=(\w+)", line):
+        st["mode"] = m.group(1)
+    for key, name in (("qp_ms", "qp"), ("inf_ms", "inf")):
+        if m := re.search(rf"\b{key}=([\d.]+)/([\d.]+)", line):
+            st[key], st[f"{name}_p99"] = float(m.group(1)), float(m.group(2))
+    for key, cast in (("fail", int), ("sat", int), ("sum_fz", float), ("sum_fn", float), ("sum_ft", float), ("calf_min", float)):
+        if m := re.search(rf"\b{key}=(-?[\d.]+)", line):
+            st[key] = cast(m.group(1))
+    st["hold"] = hold
+    return st
 
 
 def _push(world: str, newton: float, seconds: float) -> None:
