@@ -26,6 +26,8 @@ def _launch_setup(context, *args, **kwargs):
         ramp_deg=float(cfg("ramp_deg")), damping=0.0, slope_deg=float(cfg("slope_deg")), slope_len=float(cfg("slope_len")),
         contact=cfg("contact_sensors") == "true" or cfg("contact_source") == "sensor",
         real_time_factor=float(cfg("real_time_factor")),
+        stairs_h=float(cfg("stairs_h")), stairs_n=int(cfg("stairs_n")), pipes_d=float(cfg("pipes_d")), pipes_n=int(cfg("pipes_n")),
+        plate_mu=float(cfg("plate_mu")),
     )
     split_gui = gui and sys.platform == "darwin"
     gz_args = f"{world_file}" if gui and not split_gui else f"-s {world_file}"  # -r 없음: 일시정지 시작
@@ -97,6 +99,11 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("slope_deg", default_value="0.0", description="스폰 앞 2 m 오르막·평지·내리막 경사(0이면 없음)"),
             DeclareLaunchArgument("slope_len", default_value="3.0", description="오르막·내리막 길이 m"),
             DeclareLaunchArgument("ramp_deg", default_value="0.0", description="스폰 밑 경사 판(balance와 동일, slope_deg와 배타)"),
+            DeclareLaunchArgument("stairs_h", default_value="0.0", description="스폰 앞 2 m 오르는 계단·평지·내리는 계단 단 높이 m(0이면 없음, 디딤면 0.30). 지형 인자는 하나만"),
+            DeclareLaunchArgument("stairs_n", default_value="3", description="계단 단 수(한쪽)"),
+            DeclareLaunchArgument("pipes_d", default_value="0.0", description="스폰 앞 2 m 바닥에 가로로 누운 파이프 지름 m(0이면 없음, 간격 0.6)"),
+            DeclareLaunchArgument("pipes_n", default_value="5", description="파이프 수"),
+            DeclareLaunchArgument("plate_mu", default_value="0.0", description="스폰 앞 2 m 길이 3 m 얇은 판(두께 0.01) 표면 마찰(0이면 없음)"),
             DeclareLaunchArgument("stride_hz", default_value="3.0"),
             DeclareLaunchArgument("lift", default_value="0.025"),
             DeclareLaunchArgument("k_raibert", default_value="0.03"),

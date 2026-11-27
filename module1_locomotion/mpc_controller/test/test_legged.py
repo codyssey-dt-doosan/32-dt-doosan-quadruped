@@ -333,3 +333,93 @@ def test_world_real_time_factor_option():
     world = ET.fromstring(make_legged_world(CORRIDOR, real_time_factor=0.5)).find("world")
     assert world.find("physics/real_time_factor").text == "0.5"
     assert make_legged_world(CORRIDOR, real_time_factor=1.0) == make_legged_world(CORRIDOR)
+
+
+COURSE_PREFIX = ("walk_stair_", "walk_pipe_", "walk_plate")
+
+
+def _course_models(**kw) -> list:
+    world = ET.fromstring(make_legged_world(CORRIDOR, **kw)).find("world")
+    return [m for m in world.findall("model") if m.get("name", "").startswith(COURSE_PREFIX)]
+
+
+def _x_extent(m) -> tuple:
+    x = float(m.find("pose").text.split()[0])
+    geo = m.find("link/collision/geometry")
+    half = float(geo.find("box/size").text.split()[0]) / 2 if geo.find("box") is not None else float(geo.find("cylinder/radius").text)
+    return x - half, x + half
+
+
+def test_stairs_boxes_geometry():
+    from mpc_controller.legged_model import stairs_boxes, stairs_len
+
+    steps = stairs_boxes(-18.0, 0.08, 3)
+    assert [s[0] for s in steps] == ["walk_stair_1", "walk_stair_2", "walk_stair_3"]
+    _, (x, y, z), size_x = steps[2]
+    assert (x - size_x / 2, x + size_x / 2) == pytest.approx((-17.4, -15.4))
+    assert y == 0.0 and z == pytest.approx(0.20)
+    _, (x, _, z), size_x = steps[0]
+    assert (x - size_x / 2, x + size_x / 2) == pytest.approx((-18.0, -14.8)) and z == pytest.approx(0.04)
+    assert stairs_len(3) == pytest.approx(3.2)
+
+
+def test_world_course_models_and_defaults_unchanged():
+    from mpc_controller.legged_model import PLATE_T, SLOPE_W
+
+    stairs = _course_models(stairs_h=0.08)
+    assert [m.get("name") for m in stairs] == ["walk_stair_1", "walk_stair_2", "walk_stair_3"]
+    assert all(m.find("static").text == "true" for m in stairs)
+    assert _x_extent(stairs[0])[0] == pytest.approx(-18.0)
+    assert stairs[0].find("link/collision/geometry/box/size").text.split()[1:] == [str(SLOPE_W), "0.08"]
+    assert len(_course_models(stairs_h=0.08, stairs_n=2)) == 2
+
+    pipes = _course_models(pipes_d=0.06)
+    assert [m.get("name") for m in pipes] == [f"walk_pipe_{i}" for i in range(5)]
+    for i, m in enumerate(pipes):
+        x, _, z, roll, _, _ = (float(v) for v in m.find("pose").text.split())
+        assert x == pytest.approx(-17.5 + 0.6 * i) and z == pytest.approx(0.03) and roll == pytest.approx(math.pi / 2)
+        cyl = m.find("link/collision/geometry/cylinder")
+        assert float(cyl.find("radius").text) == pytest.approx(0.03) and float(cyl.find("length").text) == SLOPE_W
+    assert len(_course_models(pipes_d=0.06, pipes_n=3)) == 3
+
+    (plate,) = _course_models(plate_mu=0.3)
+    assert plate.get("name") == "walk_plate" and _x_extent(plate) == pytest.approx((-18.0, -15.0))
+    assert float(plate.find("pose").text.split()[2]) == pytest.approx(PLATE_T / 2)
+    ode = plate.find("link/collision/surface/friction/ode")
+    assert ode.find("mu").text == ode.find("mu2").text == "0.3"
+
+    off = dict(stairs_h=0.0, stairs_n=3, pipes_d=0.0, pipes_n=5, plate_mu=0.0)
+    assert make_legged_world(CORRIDOR, **off) == make_legged_world(CORRIDOR)
+    assert make_legged_world(CORRIDOR, slope_deg=15.0, **off) == make_legged_world(CORRIDOR, slope_deg=15.0)
+    assert not _course_models()
+
+
+def test_course_args_are_exclusive():
+    names = ("slope_deg", "ramp_deg", "stairs_h", "pipes_d", "plate_mu")
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            with pytest.raises(ValueError, match="하나만"):
+                make_legged_world(CORRIDOR, **{a: 0.05, b: 0.05})
+
+
+def test_courses_end_before_first_obstacle():
+    """코스는 스폰 x −20 + 2.0에서 시작해 corridor 첫 장애물(obstacle_2, x −6) 앞에서 끝난다."""
+    from mpc_controller.legged_model import PLATE_LEN, pipes_len, stairs_len
+
+    assert pipes_len(5) == pytest.approx(3.4)
+    for kw, length in (({"stairs_h": 0.10}, stairs_len(3)), ({"pipes_d": 0.08}, pipes_len(5)), ({"plate_mu": 0.2}, PLATE_LEN)):
+        start, end = min(_x_extent(m)[0] for m in _course_models(**kw)), max(_x_extent(m)[1] for m in _course_models(**kw))
+        assert start >= -18.0 - 1e-6 and end <= -18.0 + length + 1e-6
+        assert -18.0 + length < -6.5
+
+
+@pytest.mark.parametrize(
+    "kw, last",
+    [({"stairs_h": 0.05, "stairs_n": 2}, "walk_stair_2"), ({"pipes_d": 0.04, "pipes_n": 2}, "walk_pipe_1"), ({"plate_mu": 0.2}, "walk_plate")],
+)
+def test_write_legged_assets_passes_course_args(kw, last):
+    world_file, _, _ = write_legged_assets(str(REPO / "simulation"), "corridor", **kw)
+    try:
+        assert [m.get("name") for m in ET.parse(world_file).getroot().find("world").findall("model")][-1] == last
+    finally:
+        shutil.rmtree(os.path.dirname(world_file))

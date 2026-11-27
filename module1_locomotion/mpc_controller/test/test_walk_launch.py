@@ -30,3 +30,10 @@ def test_controller_rejects_unknown_value():
     ctx.launch_configurations["controller"] = "bogus"
     with pytest.raises(ValueError):
         load_launch(LAUNCH)._launch_setup(ctx)
+
+
+def test_course_args_default_off():
+    ld = load_launch(LAUNCH).generate_launch_description()
+    args = {e.name: default_text(e) for e in ld.entities if isinstance(e, DeclareLaunchArgument)}
+    want = {"stairs_h": "0.0", "stairs_n": "3", "pipes_d": "0.0", "pipes_n": "5", "plate_mu": "0.0"}
+    assert {k: args.get(k) for k in want} == want

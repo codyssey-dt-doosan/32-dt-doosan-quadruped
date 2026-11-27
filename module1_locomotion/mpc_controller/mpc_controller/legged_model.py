@@ -19,6 +19,10 @@ RAMP_NAME = "balance_ramp"
 RAMP_SIZE, RAMP_T = 3.0, 0.1
 SPAWN_CLEARANCE = 0.4  # go2 기본 스폰 z와 같음
 SLOPE_W, SLOPE_T, SLOPE_FLAT, SLOPE_ENTRY = 3.4, 0.1, 2.0, 2.0
+STAIR_TREAD = 0.30
+PIPE_GAP = 0.6
+PIPE_LEAD = 0.5  # 코스 시작 → 첫 파이프(끝에도 같은 여유)
+PLATE_LEN, PLATE_T = 3.0, 0.01
 MODEL_CONFIG = (
     '<?xml version="1.0"?><model><name>go2_legged</name><version>1.0</version>'
     '<sdf version="1.10">model.sdf</sdf></model>'
@@ -141,12 +145,32 @@ def slope_boxes(x0: float, deg: float, L: float) -> list:
     ]
 
 
-def _static_box(name: str, pose: tuple, pitch: float, size: tuple) -> ET.Element:
+def stairs_len(n: int) -> float:
+    return 2 * (n - 1) * STAIR_TREAD + SLOPE_FLAT
+
+
+def stairs_boxes(x0: float, h: float, n: int) -> list:
+    """오르는 계단 n단 → 평지 SLOPE_FLAT → 내리는 계단. 단 k(1..n)는 앞뒤로 (k−1)·디딤면만큼 좁은 상자를 높이 h씩 쌓는다.
+    반환 (name, (x,y,z), size_x)."""
+    L = stairs_len(n)
+    return [(f"walk_stair_{k}", (x0 + L / 2, 0.0, (k - 0.5) * h), L - 2 * (k - 1) * STAIR_TREAD) for k in range(1, n + 1)]
+
+
+def pipe_xs(x0: float, n: int) -> list:
+    return [x0 + PIPE_LEAD + i * PIPE_GAP for i in range(n)]
+
+
+def pipes_len(n: int) -> float:
+    return 2 * PIPE_LEAD + (n - 1) * PIPE_GAP
+
+
+def _static_box(name: str, pose: tuple, pitch: float, size: tuple, mu: float | None = None) -> ET.Element:
     x, y, z = pose
     sz = " ".join(str(v) for v in size)
+    surface = "" if mu is None else f"<surface><friction><ode><mu>{mu}</mu><mu2>{mu}</mu2></ode></friction></surface>"
     return ET.fromstring(
         f'<model name="{name}"><static>true</static><pose>{x:.6f} {y:.6f} {z:.6f} 0 {pitch:.8f} 0</pose>'
-        f'<link name="link"><collision name="c"><geometry><box><size>{sz}</size></box></geometry></collision>'
+        f'<link name="link"><collision name="c"><geometry><box><size>{sz}</size></box></geometry>{surface}</collision>'
         f'<visual name="v"><geometry><box><size>{sz}</size></box></geometry></visual></link></model>'
     )
 
@@ -154,11 +178,15 @@ def _static_box(name: str, pose: tuple, pitch: float, size: tuple) -> ET.Element
 def make_legged_world(
     world_text: str, *, wrench: bool = False, ramp_deg: float = 0.0, slope_deg: float = 0.0, slope_len: float = 3.0,
     contact: bool = False, real_time_factor: float = 1.0,
+    stairs_h: float = 0.0, stairs_n: int = 3, pipes_d: float = 0.0, pipes_n: int = 5, plate_mu: float = 0.0,
 ) -> str:
     """월드의 model://go2 include를 model://go2_legged로. include 이름(go2)은 유지 → 토픽명 불변.
 
     real_time_factor < 1이면 시뮬을 실시간보다 느리게 — 노드(Python, MPC+1 kHz 토크 루프 한 스레드)가 부하로 늦어도
     sim 시간 기준으로는 제때 돌게 해 실측이 머신 부하에 덜 흔들린다(1이면 원본 그대로)."""
+    courses = {"slope_deg": slope_deg, "ramp_deg": ramp_deg, "stairs_h": stairs_h, "pipes_d": pipes_d, "plate_mu": plate_mu}
+    if sum(map(bool, courses.values())) > 1:
+        raise ValueError(f"지형 인자는 하나만 쓸 수 있다: {courses}")
     root = ET.fromstring(world_text)
     uris = [u for u in root.iter("uri") if (u.text or "").strip() == "model://go2"]
     _expect("model://go2 include 수", 1, len(uris))
@@ -187,13 +215,27 @@ def make_legged_world(
                 "</box></geometry></visual></link></model>"
             )
         )
-    if slope_deg:
-        if ramp_deg:
-            raise ValueError("slope_deg와 ramp_deg는 같이 쓸 수 없다")
+    if slope_deg or stairs_h or pipes_d or plate_mu:  # 코스는 모두 스폰 x + SLOPE_ENTRY에서 시작
         include = next(i for i in world.findall("include") if i.find("uri") is uris[0])
         x0 = float(include.find("pose").text.split()[0]) + SLOPE_ENTRY
+    if slope_deg:
         for name, pose, pitch, length in slope_boxes(x0, slope_deg, slope_len):
             world.append(_static_box(name, pose, pitch, (length, SLOPE_W, SLOPE_T)))
+    if stairs_h:
+        for name, pose, size_x in stairs_boxes(x0, stairs_h, stairs_n):
+            world.append(_static_box(name, pose, 0.0, (size_x, SLOPE_W, stairs_h)))
+    if pipes_d:  # 바닥에 누운 원기둥, 축 y(roll π/2)
+        r = pipes_d / 2
+        geo = f"<geometry><cylinder><radius>{r}</radius><length>{SLOPE_W}</length></cylinder></geometry>"
+        for i, x in enumerate(pipe_xs(x0, pipes_n)):
+            world.append(
+                ET.fromstring(
+                    f'<model name="walk_pipe_{i}"><static>true</static><pose>{x:.6f} 0 {r:.6f} {math.pi / 2:.8f} 0 0</pose>'
+                    f'<link name="link"><collision name="c">{geo}</collision><visual name="v">{geo}</visual></link></model>'
+                )
+            )
+    if plate_mu:
+        world.append(_static_box("walk_plate", (x0 + PLATE_LEN / 2, 0.0, PLATE_T / 2), 0.0, (PLATE_LEN, SLOPE_W, PLATE_T), mu=plate_mu))
     return ET.tostring(root, encoding="unicode")
 
 
@@ -250,6 +292,11 @@ def write_legged_assets(
     slope_len: float = 3.0,
     contact: bool = False,
     real_time_factor: float = 1.0,
+    stairs_h: float = 0.0,
+    stairs_n: int = 3,
+    pipes_d: float = 0.0,
+    pipes_n: int = 5,
+    plate_mu: float = 0.0,
 ) -> tuple:
     """변환한 모델·월드·브리지 yaml을 임시 dir에 쓰고 (world_file, bridge_yaml, models_dir)를 돌려준다.
 
@@ -265,7 +312,7 @@ def write_legged_assets(
         read("models", "go2", "model.sdf"), mu, p_gain, d_gain, force_ctrl=force_ctrl, foot_r=foot_r, damping=damping, contact=contact
     )
     world_sdf = make_legged_world(read("worlds", f"{world}.sdf"), wrench=wrench, ramp_deg=ramp_deg, slope_deg=slope_deg, slope_len=slope_len, contact=contact,
-        real_time_factor=real_time_factor,
+        real_time_factor=real_time_factor, stairs_h=stairs_h, stairs_n=stairs_n, pipes_d=pipes_d, pipes_n=pipes_n, plate_mu=plate_mu,
     )
     # ponytail: 실행마다 임시 dir 하나가 남는다(수십 KB). 거슬리면 런치 종료 핸들러에서 삭제
     out = tempfile.mkdtemp(prefix="go2_legged_")
