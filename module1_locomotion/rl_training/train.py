@@ -14,7 +14,8 @@ import cfgs
 from export import drift, git_head, make_runner
 
 HERE = Path(__file__).resolve().parent
-CODE = ("go2_box_env.py", "cfgs.py", "train.py", "assets/go2_box.urdf")  # 바뀌면 같은 run을 이어 학습하지 않는다(보상·PPO·env 식·동역학)
+# 바뀌면 같은 run을 이어 학습하지 않는다(보상·PPO·env 식·동역학, make_runner의 gs.init, Genesis·rsl_rl 버전)
+CODE = ("go2_box_env.py", "cfgs.py", "train.py", "export.py", "assets/go2_box.urdf", "requirements.txt")
 
 
 def provenance() -> dict:
@@ -63,6 +64,7 @@ def main():
     ap.add_argument("--cpu", action="store_true")
     a = ap.parse_args()
 
+    prov, s2s = provenance(), cfgs.load_sim2sim()  # Genesis 빌드(수십 초) 전, 이 프로세스가 import한 코드 기준
     run_dir = a.log_dir / a.exp_name
     ckpt = prepare_log_dir(run_dir, a.resume)
     if ckpt is not None and (keys := drift(run_dir) + code_drift(run_dir)):
@@ -76,8 +78,8 @@ def main():
         env = runner.env
         with open(run_dir / "cfgs.pkl", "wb") as f:
             pickle.dump([env.env_cfg, env.obs_cfg, env.reward_cfg, env.command_cfg, runner.cfg], f)
-        (run_dir / "sim2sim.json").write_text(json.dumps(cfgs.load_sim2sim(), indent=2))
-        (run_dir / "provenance.json").write_text(json.dumps(provenance(), indent=2))
+        (run_dir / "sim2sim.json").write_text(json.dumps(s2s, indent=2))
+        (run_dir / "provenance.json").write_text(json.dumps(prov, indent=2))
     else:
         print(f"resume {ckpt}")
         runner.load(str(ckpt), map_location=runner.device)  # Colab(CUDA) 체크포인트를 맥에서 이어도 되게
