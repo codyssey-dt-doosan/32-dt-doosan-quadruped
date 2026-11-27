@@ -16,6 +16,9 @@ from mpc_controller.legged_model import write_legged_assets
 
 def _launch_setup(context, *args, **kwargs):
     cfg = lambda k: LaunchConfiguration(k).perform(context)  # noqa: E731
+    controller = cfg("controller")
+    if controller not in ("mpc", "rl"):
+        raise ValueError(f"controller는 mpc|rl: {controller!r}")
     world, gui = cfg("world"), cfg("gui").lower() == "true"
     sim_share = get_package_share_directory("simulation")
     world_file, legged_yaml, legged_models = write_legged_assets(
@@ -73,6 +76,11 @@ def _launch_setup(context, *args, **kwargs):
         output="screen",
         parameters=[walk_params],
     )
+    if controller == "rl":  # walk_node 대신 numpy 정책 노드, 나머지(자산·브리지·servo)는 공유
+        walk = Node(
+            package="mpc_controller", executable="rl_node", name="rl", output="screen",
+            parameters=[{"use_sim_time": True, "world": world, "policy": cfg("policy")}],
+        )
     servo = Node(package="mpc_controller", executable="joint_servo", name="joint_servo", output="screen", parameters=[{"use_sim_time": True}])
     resource_path = os.pathsep.join([legged_models, os.path.join(sim_share, "models")])
     return [SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", resource_path), gz_sim, *gz_gui, *bridges, walk, servo]
@@ -83,6 +91,8 @@ def generate_launch_description() -> LaunchDescription:
         [
             DeclareLaunchArgument("world", default_value="corridor"),
             DeclareLaunchArgument("gui", default_value="true"),
+            DeclareLaunchArgument("controller", default_value="mpc", description="mpc(walk_node) | rl(rl_node, 옵트인)"),
+            DeclareLaunchArgument("policy", default_value="", description="controller:=rl 정책 .npz 경로, 비우면 share/policies 최신"),
             DeclareLaunchArgument("mu", default_value="0.8", description="다리·발 충돌 마찰"),
             DeclareLaunchArgument("slope_deg", default_value="0.0", description="스폰 앞 2 m 오르막·평지·내리막 경사(0이면 없음)"),
             DeclareLaunchArgument("slope_len", default_value="3.0", description="오르막·내리막 길이 m"),
