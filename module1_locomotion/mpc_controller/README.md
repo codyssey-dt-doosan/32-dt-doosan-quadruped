@@ -183,6 +183,31 @@ Sim2Sim 교훈:
 - **armature**: Genesis 1.5 `gs.morphs.URDF`는 관절 armature 0.1 kg·m²를 기본으로 더한다. Gazebo/DART엔 없어 학습 쪽 유효 관절 관성이 hip/thigh/calf 4.8/8.4/34배였고, Gazebo에서 25 Hz로 진동하다 26° 기울어 전도했다(첫 학습 체크포인트 400). `sim2sim.json`의 `"armature": 0.0`을 env가 읽어 해소(양쪽 테스트). armature 0 Genesis가 Gazebo 실패를 수치로 재현했고, Gazebo 목표 개루프 재생이 armature 0 Genesis와 일치했다.
 - **tracking_sigma**: 0.25(~1 m/s 로봇용)로는 이 느린 로봇이 과소 추종(후진 13~19% 느림, 학습을 늘려도 동일) → 0.0625(= 0.25 × 0.5²).
 
+## G3 시험 코스 (보너스 #8 험지 비교, 옵트인)
+
+MPC와 RL을 같은 코스·같은 판정·RTF 0.5로 잰다. 코스는 corridor 스폰 x −20 + 2 m(x −18)에서 시작해 첫 장애물(x −6) 전에 끝나고, 폭 3.4 m다. 지형 인자는 하나만 켤 수 있다(둘 이상이면 런치 오류). 기본 0이면 월드가 바뀌지 않는다.
+
+| 코스 | 런치 인자 | 시험값 | 코스 길이 | `walk_metrics` |
+|---|---|---|---|---|
+| 계단 | `stairs_h:=H stairs_n:=3` | 단 높이 0.05·0.08·0.10 m, 디딤면 0.30 m, 오름 3단 → 평지 2 m → 내림 3단 | 3.2 m | `--cmd 0.3 0 25 --course stairs 3` |
+| 파이프 | `pipes_d:=D pipes_n:=5` | 지름 0.04·0.06·0.08 m, 바닥에 가로로 누운 원기둥(축 y), 간격 0.6 m | 3.4 m | `--cmd 0.3 0 25 --course pipes 5` |
+| 저마찰 판 | `plate_mu:=M` | mu 0.3·0.2, 길이 3 m·두께 1 cm | 3.0 m | `--cmd 0.3 0 24 --course plate` |
+| 경사 | `slope_deg:=A` | 15·20° | 7.8·7.6 m | `--cmd 0.3 0 40 --slope A 3` |
+
+- `--course` PASS: 완주(코스 끝 + 0.3 m) ∧ 횡 드리프트 < 0.3 m ∧ 공통 판정(mode run, hold 0, fail ≤ 3, sat ≤ 50, QP/추론 평균 < 5 ms·p99 < 10 ms, 전도 0, servo_stale 0). 기울기·코스 통과 시간·속도는 정보용
+- `--slope` 내리막 최대 기울기 문턱은 **지형각 + 5°**(15°는 20° 그대로). 20° 내리막은 지형과 평행해도 기울기가 ≈20°라 예전 고정 20°로는 구조적으로 FAIL이었다
+- 판 마찰: Gazebo(DART)는 두 면 중 **작은** 마찰을 쓴다(15° 판 위 mu 0.8 박스 실험: 판 mu 0.3은 정지, 곱이면 0.24 < tan 15°라 미끄러졌어야 함. 0.2는 미끄러짐). 그래서 판 SDF mu = 실효 마찰 = 시험값이고, Genesis 마찰 DR 0.2~1.2 안이다
+- MPC는 기본값 그대로 잰다(`lift` 0.025 포함, 지형별 튜닝 없음)
+
+MPC 스모크 1회(2026-11-27, 코스 배치·지속시간 확인용, Unity 끔, 부하 2.6~4.0 — 공식 비교는 RL과 번갈아 3회):
+
+| 코스 | 결과 |
+|---|---|
+| 계단 0.05 / 0.08 / 0.10 | 전도 / 첫 단 근처 정체(포화 1313) / 전도 — 3회 모두 미완주 |
+| 파이프 0.04 / 0.06 / 0.08 | 3회 모두 전도 |
+| 판 0.3 / 0.2 | PASS, v 0.289·0.288, 기울기 ≤ 2.0°, 코스 10.4 s |
+| 경사 15° / 20° | 완주·hold 0, 내리막 기울기 16.9° / 24.4°(문턱 안), 내리막 v_max 0.404 / 0.483 > 0.4로 FAIL |
+
 ## 테스트·실험
 
 ```bash
@@ -190,5 +215,5 @@ python -m pytest test/ -q -p no:launch_testing -p no:launch_ros
 python3 scripts/patrol_metrics.py --world corridor   # full_system 떠 있는 상태에서 한 바퀴 측정
 python3 scripts/patrol_metrics.py --world unity_plant --timeout 3600   # 경사로 순찰(traversability:=true) — falls·off_ramp(경사로 폭 밖 /odom 샘플)도 출력
 python3 scripts/trot_metrics.py --world corridor --expect-v 0.3 --expect-w 0   # legged.launch.py에 /cmd_vel 걸린 상태에서 추종 측정(인자 없으면 제자리 trot 기준)
-python3 scripts/walk_metrics.py --world corridor --log log/walk_<태그>.log --cmd 0.3 0 15   # walk.launch.py 떠 있는 상태에서 (v,w) 추종(--replay F.csv [--replay-window S D], --slope DEG LEN)
+python3 scripts/walk_metrics.py --world corridor --log log/walk_<태그>.log --cmd 0.3 0 15   # walk.launch.py 떠 있는 상태에서 (v,w) 추종(--replay F.csv [--replay-window S D], --slope DEG LEN, --course stairs|pipes|plate [N])
 ```
