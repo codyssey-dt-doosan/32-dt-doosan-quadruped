@@ -152,6 +152,34 @@ ros2 launch mpc_controller legged.launch.py slope_deg:=15     # 대조군: 개�
 
 **함정:** 맥이 잠들면 IMU가 끊겨 hold → 배치는 깨어 있을 때만. GUI 카메라는 `gz service -s /gui/move_to --reqtype gz.msgs.StringMsg --reptype gz.msgs.Boolean --req 'data: "go2"'` 반복만 로봇을 잡는다(follow는 벽).
 
+## RL 보행 (보너스 #8, `walk.launch.py controller:=rl`, 옵트인)
+
+Genesis에서 PPO로 학습한 평지 정책(`policies/flat_v3.npz`)을 `walk_node` 대신 `rl_node`가 돌린다. 기본 `controller:=mpc`는 불변이고, 자산 변환·브리지·`joint_servo`는 MPC 보행과 공유한다.
+
+```bash
+ros2 launch mpc_controller walk.launch.py controller:=rl                                   # 설치된 policies/*.npz 중 최신
+ros2 launch mpc_controller walk.launch.py controller:=rl policy:=<npz> real_time_factor:=0.5
+```
+
+- 구조: Genesis 학습(`module1_locomotion/rl_training`, 학습·평가는 그 README) → `export.py`가 npz로 변환 → `rl_node`(numpy 추론, IMU 4틱 = 50 Hz) → `/walk/joint_cmd` → `joint_servo`. 추론 0.22~0.28 ms(p99 ≤0.39).
+- Sim2Sim 단일 출처: 관절 순서·부호, q_nom, Kp 20/Kd 0.5, 액션 스케일, 50 Hz, 관측 구성, DR 범위, armature는 `config/sim2sim.json` 한 파일이다. `rl_node`는 정책에 박힌 설정이 설치된 JSON과 다르면 시작하지 않는다 — JSON을 바꾼 뒤엔 `mpc_controller`를 다시 빌드하지 않으면 다른 키 이름을 찍고 종료한다.
+- 안전: 설정 불일치·NaN·명령 끊김은 거부·hold·정지.
+
+실측(corridor 헤드리스, RTF 0.5, `walk_metrics --cmd`, 각 3회, 2026-11-27). GATE = 전도 없음 + 공통 검사 + 0 아닌 명령 성분마다 50% 이상. 정밀 = 오차 <10%·기울기 <3°·z_std <1 cm.
+
+| (v,w) s | RL flat_v3 (3회) | 정밀 | GATE | MPC(10-04 기본값) |
+|---|---|---|---|---|
+| (0.3,0) 15 | 0.300 / 0.300 / 0.301 m/s, 오차 ≤0.3%, 기울기 ≤1.13° | 3/3 | 3/3 | 0.291 |
+| (0,0.5) 15 | w 0.418 / 0.421 / 0.412(오차 15.8~17.5%), 기울기 3.8~5.0° | 0/3 | 3/3 | 0.476 |
+| (0.5,1.0) 15 | 0.505 / 0.985 ×3(오차 1.1 / 1.5%), 기울기 ≤1.37° | 3/3 | 3/3 | 0.484 / 0.964 |
+| (−0.2,0) 8 | −0.188 / −0.182 / −0.181(오차 6.0~9.4%), 기울기 2.7 / 3.0 / 3.7° | 2/3 | 3/3 | −0.206 |
+
+12회 모두 전도 0·hold 0·서보 포화 0·`servo_stale` 0 → **G2 12/12 GATE PASS, 정밀 8/12.** 직진·복합은 MPC보다 정확하고 제자리 회전(Genesis 평가는 7%)·후진은 느리다. 같은 날 기본 `controller:=mpc` 회귀 (0.3,0): v 0.290, 오차 3.3%, 기울기 0.64°, PASS(불변).
+
+Sim2Sim 교훈:
+- **armature**: Genesis 1.5 `gs.morphs.URDF`는 관절 armature 0.1 kg·m²를 기본으로 더한다. Gazebo/DART엔 없어 학습 쪽 유효 관절 관성이 hip/thigh/calf 4.8/8.4/34배였고, Gazebo에서 25 Hz로 진동하다 26° 기울어 전도했다(첫 학습 체크포인트 400). `sim2sim.json`의 `"armature": 0.0`을 env가 읽어 해소(양쪽 테스트). armature 0 Genesis가 Gazebo 실패를 수치로 재현했고, Gazebo 목표 개루프 재생이 armature 0 Genesis와 일치했다.
+- **tracking_sigma**: 0.25(~1 m/s 로봇용)로는 이 느린 로봇이 과소 추종(후진 13~19% 느림, 학습을 늘려도 동일) → 0.0625(= 0.25 × 0.5²).
+
 ## 테스트·실험
 
 ```bash
