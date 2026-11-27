@@ -2,7 +2,8 @@
 """순찰 한 바퀴 지표. full_system.launch.py(gui:=false)가 떠 있는 상태에서 실행.
 
 home 출발 → 다음 home 도착(= /mission/status가 goto:home으로 두 번째 진입)까지:
-lap_s(완주 시간), mean_abs_w(평균 |w|, 요동), min_obst_m(장애물 중심까지 최소 거리 − 반경).
+lap_s(완주 시간), mean_abs_w(평균 |w|, 요동), min_obst_m(장애물 중심까지 최소 거리 − 반경),
+falls(/fall_recovery/status가 fallen으로 바뀐 횟수), off_ramp(경사로 x 구간에서 경사로 폭 밖에 있던 /odom 샘플 수 — 옆 계단 이탈).
 막힘 횟수는 런치 로그에서 `grep -c '경로 막힘'`.
 """
 
@@ -21,12 +22,18 @@ OBSTACLES = {
     "corridor": [(8.0, 0.6, 0.36), (-6.0, -0.5, 0.36)],
     "factory": [(6.0, 4.0, 0.36), (-5.0, -3.0, 0.36), (8.0, -6.0, 0.35), (10.0, -6.0, 0.35)],
 }
+# 경사로 (x0, x1, y0, y1) — unity_plant 판(simulation/worlds/unity_plant.sdf ramp_0). 폭 밖은 옆 낙차(x < 10.8, 바닥 0)·계단
+RAMPS = {"unity_plant": (7.93, 12.19, -0.9, 0.7)}
 
 
 class Metrics(Node):
     def __init__(self, world: str) -> None:
         super().__init__("patrol_metrics")
-        self.obst = OBSTACLES[world]
+        self.obst = OBSTACLES.get(world, [])
+        self.ramp = RAMPS.get(world)
+        self.falls = 0
+        self.off_ramp = 0
+        self._fall = None
         self.status = None
         self.pos = None
         self.w_abs: list[float] = []
@@ -35,6 +42,12 @@ class Metrics(Node):
         self.create_subscription(String, "/mission/status", self.status_cb, 10)
         self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
         self.create_subscription(Twist, "/cmd_vel", self.cmd_cb, 10)
+        self.create_subscription(String, "/fall_recovery/status", self.fall_cb, 10)
+
+    def fall_cb(self, m: String) -> None:
+        if self.recording and m.data == "fallen" and self._fall != "fallen":
+            self.falls += 1
+        self._fall = m.data
 
     def status_cb(self, m: String) -> None:
         self.status = m.data
@@ -45,6 +58,8 @@ class Metrics(Node):
         if self.recording:
             for ox, oy, r in self.obst:
                 self.min_obst = min(self.min_obst, math.hypot(p.x - ox, p.y - oy) - r)
+            if self.ramp and self.ramp[0] < p.x < self.ramp[1] and not self.ramp[2] < p.y < self.ramp[3]:
+                self.off_ramp += 1
 
     def cmd_cb(self, m: Twist) -> None:
         if self.recording:
@@ -82,12 +97,13 @@ def main() -> None:
             lap = time.monotonic() - lap_t0
             mean_w = sum(n.w_abs) / len(n.w_abs) if n.w_abs else float("nan")
             print(
-                f"world={a.world} lap_s={lap:.1f} mean_abs_w={mean_w:.3f} min_obst_m={n.min_obst:.2f}",
+                f"world={a.world} lap_s={lap:.1f} mean_abs_w={mean_w:.3f} min_obst_m={n.min_obst:.2f} "
+                f"falls={n.falls} off_ramp={n.off_ramp}",
                 flush=True,
             )
             break
     else:
-        print(f"timeout: phase={phase} status={n.status} pos={n.pos}", flush=True)
+        print(f"timeout: phase={phase} status={n.status} pos={n.pos} falls={n.falls} off_ramp={n.off_ramp}", flush=True)
     n.destroy_node()
     rclpy.shutdown()
 
