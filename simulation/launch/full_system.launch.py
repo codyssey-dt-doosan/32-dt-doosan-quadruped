@@ -27,6 +27,7 @@ def _launch_setup(context, *args, **kwargs):
     map_size = LaunchConfiguration("map_size").perform(context)
     leg_animation = LaunchConfiguration("leg_animation").perform(context)
     locomotion = LaunchConfiguration("locomotion").perform(context)
+    traversability = LaunchConfiguration("traversability").perform(context)
     inspection = LaunchConfiguration("inspection").perform(context).lower() == "true"
     gas_safety = LaunchConfiguration("gas_safety").perform(context).lower() == "true"
 
@@ -115,6 +116,7 @@ def _launch_setup(context, *args, **kwargs):
                 "map_size": map_size,
                 "leg_animation": leg_animation,
                 "locomotion": locomotion,
+                "traversability": traversability,
             }.items(),
         )
         for pkg, launch_file in modules
@@ -170,6 +172,13 @@ def generate_launch_description() -> LaunchDescription:
                 "locomotion",
                 default_value="velocity",
                 description="구동 방식: velocity(몸체 속도 직접, 기본) | legged(다리 구동 trot, C안)",
+            ),
+            DeclareLaunchArgument(
+                "traversability",
+                default_value="false",
+                description="elevation_map 통과 가능 판정(⑤-2, 경사로용). true면 /elevation_map 값이 높이가 아니라"
+                " 막힘 표시(1.0 막힘 / 0.0 통과 지면 / NaN 미관측). /imu가 필요해 factory(IMU 플러그인 없음)에선 정지."
+                " 기본 false = 지금 동작",
             ),
             OpaqueFunction(function=_launch_setup),
         ]
