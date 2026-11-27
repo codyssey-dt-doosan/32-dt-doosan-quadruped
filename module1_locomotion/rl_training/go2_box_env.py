@@ -162,7 +162,8 @@ class Go2BoxEnv:
         self.kp_scale = torch.empty_like(self.friction)
         self.kd_scale = torch.empty_like(self.friction)
         self.latency_k = torch.empty((self.num_envs,), dtype=gs.tc_int, device=gs.device)
-        self.cmd_path = torch.zeros_like(self.friction)  # 에피소드 동안 |v_cmd|·dt 누적(커리큘럼 내려가기 기준)
+        # 에피소드 원점 기준 명령 유니사이클 적분 (x, y, yaw) — 명령대로 갔을 때의 위치(커리큘럼 내려가기 기준)
+        self.cmd_pose = torch.zeros((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
         if self.terrain is not None:
             # 초기 레벨 0~max_init_level, 타입(열)은 env를 고르게 나눈다
             self.tile_origins = torch.tensor(tile_origins, dtype=gs.tc_float, device=gs.device)
@@ -223,11 +224,14 @@ class Go2BoxEnv:
 
     def _terrain_spawn(self, envs_idx):
         """지형 모드 reset: terrain_levels_vel(Isaac Lab)로 레벨을 옮기고 새 타일 origin 위 base_init_z에 세운다. 스폰 위치 (n, 3).
-        타일 반 넘게 가면 +1, 명령 경로의 절반도 못 가면 −1. 최고 레벨을 넘기면 무작위 레벨, 0 아래는 0. 첫 reset은 초기 레벨 그대로."""
+        타일 반 넘게 가면 +1, 명령대로 갔을 때의 직선 변위의 절반도 못 가면 −1(그 변위가 중앙 플랫폼 반경 이하면 지형을 시험하지 않았으니
+        그대로). 경로 길이가 아니라 변위인 이유: 회전 명령이 4 s마다 바뀌어 명령을 잘 따라도 변위가 경로의 약 40%다(스모크 실측).
+        최고 레벨을 넘기면 무작위 레벨, 0 아래는 0. 첫 reset은 초기 레벨 그대로."""
         if envs_idx is not None:
             dist = torch.norm(self.base_pos[:, :2] - self.origins[:, :2], dim=1)
             up = dist > self.terrain["tile"] / 2
-            down = (dist < 0.5 * self.cmd_path) & ~up
+            cmd_disp = torch.norm(self.cmd_pose[:, :2], dim=1)
+            down = (dist < 0.5 * cmd_disp) & (cmd_disp > self.terrain["platform"] / 2) & ~up
             levels = self.levels + up.to(gs.tc_int) - down.to(gs.tc_int)
             rows = self.terrain["rows"]
             levels = torch.where(levels >= rows, torch.randint_like(levels, rows), levels.clamp(min=0))
@@ -266,7 +270,10 @@ class Go2BoxEnv:
 
         # update buffers
         self.episode_length_buf += 1
-        self.cmd_path += torch.norm(self.commands[:, :2], dim=1) * self.dt
+        yaw = self.cmd_pose[:, 2] + self.commands[:, 2] * self.dt
+        self.cmd_pose[:, 0] += self.commands[:, 0] * torch.cos(yaw) * self.dt
+        self.cmd_pose[:, 1] += self.commands[:, 0] * torch.sin(yaw) * self.dt
+        self.cmd_pose[:, 2] = yaw
         self.base_pos = self.robot.get_pos()
         self.base_quat = self.robot.get_quat()
         inv_base_quat = inv_quat(self.base_quat)
@@ -342,7 +349,7 @@ class Go2BoxEnv:
             self.last_actions.zero_()
             self.last_dof_vel.zero_()
             self.feet_air_time.zero_()
-            self.cmd_path.zero_()
+            self.cmd_pose.zero_()
             self.episode_length_buf.zero_()
             self.reset_buf.fill_(True)
         else:
@@ -359,7 +366,7 @@ class Go2BoxEnv:
             self.last_actions.masked_fill_(envs_idx[:, None], 0.0)
             self.last_dof_vel.masked_fill_(envs_idx[:, None], 0.0)
             self.feet_air_time.masked_fill_(envs_idx[:, None], 0.0)
-            self.cmd_path.masked_fill_(envs_idx, 0.0)
+            self.cmd_pose.masked_fill_(envs_idx[:, None], 0.0)
             self.episode_length_buf.masked_fill_(envs_idx, 0)
             self.reset_buf.masked_fill_(envs_idx, True)
 

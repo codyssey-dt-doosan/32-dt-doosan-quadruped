@@ -38,7 +38,7 @@ def zero(env):
 def reset_at(env, level):
     env.levels[:] = level
     env.reset()
-    env.commands[:] = 0.0  # cmd_path가 늘지 않게(내려가기 판정을 테스트가 정한다)
+    env.commands[:] = 0.0  # cmd_pose가 움직이지 않게(내려가기 판정을 테스트가 정한다)
 
 
 def move(env, idx, dx):
@@ -70,14 +70,25 @@ def test_spawn_on_tile_origin(env):
 def test_curriculum_up_down(env):
     reset_at(env, 1)
     move(env, [0], 0.6 * TERRAIN["tile"])  # tile/2 넘게 걸어감 → 다음 난이도
-    env.cmd_path[:] = 0.0
-    env.cmd_path[1] = 100.0  # 명령 경로의 절반도 못 감 → 이전 난이도
+    env.cmd_pose[:] = 0.0
+    env.cmd_pose[1, 0] = 100.0  # 명령대로 갔을 때 변위의 절반도 못 감 → 이전 난이도
     env.episode_length_buf[:] = env.max_episode_length  # 다음 step에서 전부 시간 초과 리셋
     _, _, done, extras = env.step(zero(env))
     assert done.all()
     assert env.levels.tolist() == [2, 0, 1, 1, 1, 1, 1, 1]
     assert extras["episode"]["terrain_level"] == pytest.approx(env.levels.float().mean().item())
     assert torch.allclose(env.robot.get_pos()[:, :2], env.origins[:, :2], atol=1e-5)  # 새 타일 origin에 다시 섬
+
+
+def test_curriculum_keeps_good_tracker_and_untested(env):  # 회전 명령으로 변위가 경로보다 짧아도 명령대로 갔으면 유지
+    reset_at(env, 1)
+    move(env, [0], 1.0)
+    env.cmd_pose[:] = 0.0
+    env.cmd_pose[0, :2] = torch.tensor([0.8, 0.6])  # 명령 변위 1.0 m, 실제 1.0 m(경로는 더 길었을 수 있다) → 유지
+    env.cmd_pose[1, 0] = 0.3  # 명령 변위가 플랫폼 반경(0.5 m) 이하 → 지형을 시험 안 함 → 유지
+    env.episode_length_buf[:] = env.max_episode_length
+    env.step(zero(env))
+    assert env.levels.tolist()[:2] == [1, 1]
 
 
 def test_curriculum_wraps_top_level(env):  # 최고 레벨을 넘기면 범위 밖 인덱스가 아니라 무작위 레벨(Isaac 방식)
