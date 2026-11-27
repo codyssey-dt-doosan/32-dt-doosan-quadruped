@@ -157,13 +157,14 @@ ros2 launch mpc_controller legged.launch.py slope_deg:=15     # 대조군: 개�
 Genesis에서 PPO로 학습한 평지 정책(`policies/flat_v3.npz`)을 `walk_node` 대신 `rl_node`가 돌린다. 기본 `controller:=mpc`는 불변이고, 자산 변환·브리지·`joint_servo`는 MPC 보행과 공유한다.
 
 ```bash
-ros2 launch mpc_controller walk.launch.py controller:=rl                                   # 설치된 policies/*.npz 중 최신
-ros2 launch mpc_controller walk.launch.py controller:=rl policy:=<npz> real_time_factor:=0.5
+ros2 launch mpc_controller walk.launch.py controller:=rl                                   # 기본 policy:=flat_v3.npz(share/policies 안)
+ros2 launch mpc_controller walk.launch.py controller:=rl policy:=<파일 이름|npz 경로> real_time_factor:=0.5
 ```
 
 - 구조: Genesis 학습(`module1_locomotion/rl_training`, 학습·평가는 그 README) → `export.py`가 npz로 변환 → `rl_node`(numpy 추론, IMU 4틱 = 50 Hz) → `/walk/joint_cmd` → `joint_servo`. 추론 0.22~0.28 ms(p99 ≤0.39).
 - Sim2Sim 단일 출처: 관절 순서·부호, q_nom, Kp 20/Kd 0.5, 액션 스케일, 50 Hz, 관측 구성, DR 범위, armature는 `config/sim2sim.json` 한 파일이다. `rl_node`는 정책에 박힌 설정이 설치된 JSON과 다르면 시작하지 않는다 — JSON을 바꾼 뒤엔 `mpc_controller`를 다시 빌드하지 않으면 다른 키 이름을 찍고 종료한다.
 - 안전: 설정 불일치·NaN·명령 끊김은 거부·hold·정지.
+- 정책 출처: `flat_v3` = Genesis run `flat_v3`의 `model_599`(600 반복, 4096 env, Apple M4 Metal 31분), 학습 코드는 커밋 f0c33ea(`fix : 추종 보상 tracking_sigma 0.25→0.0625`). G1(Genesis 평지·DR 없음) 오차: (0.3,0) 2.4% · (0,0.5) w 7.0% · (0.5,1.0) 1.5/1.3% · (−0.2,0) 3.6%, 전도 0. npz의 `meta`(run·ckpt·iteration·내보낸 커밋)는 `rl_node` 기동 로그 `walk started (rl)` 줄에 찍힌다.
 
 실측(2026-11-27, corridor 헤드리스, RTF 0.5, Unity 끔, 부하 2.9~7.5, `walk_metrics --cmd`): 조합마다 RL(`flat_v3.npz`)과 기본 MPC(`walk_node`)를 번갈아 각 3회. GATE = 전도 없음 + 공통 검사 + 0 아닌 명령 성분마다 50% 이상. 정밀 = 오차 <10%·기울기 <3°·z_std <1 cm.
 
