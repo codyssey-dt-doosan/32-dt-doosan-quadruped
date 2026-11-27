@@ -49,3 +49,7 @@ docs/captures/*.jpg
 
 # Temporary reference-video frames and staging scripts
 /.runtime/unity-reference/
+
+# RL training outputs
+module1_locomotion/rl_training/logs/
+module1_locomotion/rl_training/**/*.pt

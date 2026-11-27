@@ -1,0 +1,5 @@
+genesis-world==1.5.0
+torch==2.15.0
+rsl-rl-lib==6.0.0
+tensorboard
+pytest
