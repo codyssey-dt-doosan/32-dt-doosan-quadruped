@@ -34,10 +34,10 @@ uv pip install -r requirements.txt
 
 | 셀 | 내용 |
 |----|------|
-| 1~2 | `nvidia-smi`, Drive 마운트 |
-| 3 | `requirements.txt` 설치(Colab 기본 torch를 쓰므로 `torch==` 줄은 제외) |
-| 4 | T4 속도 측정: Genesis v1.5.0 공식 `go2_train.py`(-b 4096, 101 iter)의 총 시간·step/s. 비교 기준은 Mac 약 5.7만 step/s |
-| 5 | `BRANCH`(기본 `main`) 클론 후 `train.py` 실행. `--log-dir`은 Drive `rl_go2`, `--save-interval 50`마다 체크포인트 저장. run 폴더에 `model_*.pt`가 있으면 `--resume`, 없으면 새로 시작 |
+| 1~2 | `BRANCH` 지정, `nvidia-smi`, Drive 마운트 |
+| 3 | 속도 측정용 핀 설치(`genesis-world`·`rsl-rl-lib`·`tensorboard`, Colab 기본 torch 사용). push 전에도 실행 가능 |
+| 4 | T4 속도 측정: Genesis v1.5.0 공식 `go2_train.py`(-b 4096, 101 iter)의 총 시간·step/s(`Steps per second`·`Time elapsed` 마지막 줄). 비교 기준은 Mac 약 5.7만 step/s |
+| 5 | `BRANCH` 클론, `requirements.txt` 설치(`torch==` 줄 제외) 후 `train.py` 실행. `MAX_ITER`는 총 반복 수로, 가장 큰 `model_N.pt`를 빼 남은 만큼만 학습한다. `--log-dir`은 Drive `rl_go2`, `--save-interval 50`마다 체크포인트 저장. run 폴더에 `model_*.pt`가 있으면 `--resume`, 없으면 새로 시작 |
 
 - Pro 한도: 백그라운드 실행 없음, 세션 최대 약 12 h(그 전에 끊길 수 있음), 동시 세션 1개. 브라우저 탭을 열어 두고, Mac은 `caffeinate -dims`로 잠자기를 막는다
 - 끊기면 노트북을 다시 열어 셀 2·3·5를 실행하면 Drive의 마지막 체크포인트에서 이어 간다
