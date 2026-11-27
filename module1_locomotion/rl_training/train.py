@@ -25,13 +25,15 @@ def provenance() -> dict:
             "code": {f: hashlib.sha256((HERE / f).read_bytes()).hexdigest() for f in CODE}}
 
 
-def code_drift(run_dir) -> list:
-    """run 시작 때 남긴 provenance.json과 지금 학습 코드가 다른 파일. 기록이 없으면 그 사실을 돌려준다."""
+def code_drift(run_dir, terrain: bool = False) -> list:
+    """run 시작 때 남긴 provenance.json과 지금 학습 코드가 다른 파일, 지형 모드가 다르면 "--terrain". 기록이 없으면 그 사실을 돌려준다."""
     p = Path(run_dir) / "provenance.json"
     if not p.exists():
         return ["provenance.json 없음"]
-    saved, now = json.loads(p.read_text())["code"], provenance()["code"]
-    return sorted(f for f in saved.keys() | now.keys() if saved.get(f) != now.get(f))
+    saved = json.loads(p.read_text())
+    now = provenance()["code"]
+    keys = sorted(f for f in saved["code"].keys() | now.keys() if saved["code"].get(f) != now.get(f))
+    return keys + (["--terrain"] if saved.get("terrain", False) != terrain else [])  # 옛 run은 평지
 
 
 def default_log_dir() -> Path:
@@ -68,7 +70,8 @@ def main():
     prov, s2s = provenance(), cfgs.load_sim2sim()  # Genesis 빌드(수십 초) 전, 이 프로세스가 import한 코드 기준
     run_dir = a.log_dir / a.exp_name
     ckpt = prepare_log_dir(run_dir, a.resume)
-    if ckpt is not None and (keys := drift(run_dir) + code_drift(run_dir)):
+    prov["terrain"] = a.terrain  # 재연결 때 --terrain을 빠뜨리면 험지 run을 평지로 이어 학습한다
+    if ckpt is not None and (keys := drift(run_dir) + code_drift(run_dir, a.terrain)):
         raise SystemExit(f"run 시작 때와 다르다(sim2sim.json·학습 코드): {', '.join(keys)} — "
                          f"provenance.json의 git 커밋으로 맞추거나 새 -e로 시작")
 

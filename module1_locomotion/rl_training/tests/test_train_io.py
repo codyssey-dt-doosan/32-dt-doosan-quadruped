@@ -46,3 +46,12 @@ def test_code_drift_refuses_changed_training_code(tmp_path):  # 코랩 재연결
     p["code"]["cfgs.py"] = "0" * 64
     (tmp_path / "provenance.json").write_text(json.dumps(p))
     assert code_drift(tmp_path) == ["cfgs.py"]
+
+
+def test_code_drift_refuses_terrain_mode_change(tmp_path):  # 코랩 재연결 때 --terrain을 빠뜨리면 험지 run이 평지로 이어지지 않게
+    p = provenance()
+    (tmp_path / "provenance.json").write_text(json.dumps({**p, "terrain": True}))
+    assert code_drift(tmp_path, terrain=True) == []
+    assert code_drift(tmp_path, terrain=False) == ["--terrain"]
+    (tmp_path / "provenance.json").write_text(json.dumps(p))  # terrain 키가 없는 옛 run = 평지
+    assert code_drift(tmp_path) == [] and code_drift(tmp_path, terrain=True) == ["--terrain"]
