@@ -15,7 +15,7 @@ from export import drift, git_head, make_runner
 
 HERE = Path(__file__).resolve().parent
 # 바뀌면 같은 run을 이어 학습하지 않는다(보상·PPO·env 식·동역학, make_runner의 gs.init, Genesis·rsl_rl 버전)
-CODE = ("go2_box_env.py", "cfgs.py", "terrain.py", "train.py", "export.py", "assets/go2_box.urdf", "requirements.txt")
+CODE = ("go2_box_env.py", "cfgs.py", "mirror.py", "terrain.py", "train.py", "export.py", "assets/go2_box.urdf", "requirements.txt")
 
 
 def provenance() -> dict:
