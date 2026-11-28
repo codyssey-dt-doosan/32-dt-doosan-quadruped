@@ -85,6 +85,29 @@ Gazebo(헤드리스)·`full_system`·네이티브 브리지(`ws://127.0.0.1:9090
 - **경사로 통과(⑤-2)**: 스크립트는 `WORLD=unity_plant`에서 elevation_map `traversability`를 켠다(`/elevation_map` 값이 높이 대신 막힘 표시, 끄려면 `TRAV=false`). legged + mpc 1랩 3/3 완주(헤드리스 2회 515.6·539.1 s·경사로 이탈 0, Unity Play 동시 1회 sim 370 s·RTF 0.25·막힘 0, 전도 0, 2026-11-27). 웨이포인트 바로 뒤에 벽·기계가 있는 곳(Return_Aisle·Gas_Leak_Approach)에서는 도착 직전 한 프레임 '경로 막힘'이 난다 — 헤딩 스캔 1.5 m가 웨이포인트 너머 벽을 본다. velocity 모드는 경사 뒤 몸체 pitch가 굳어 떠오르므로 경사로 주행에 맞지 않는다.
 - 한 머신에서 Unity HDRP Play를 같이 돌리면 Gazebo RTF가 0.70~0.85에서 0.1 안팎으로 떨어진다(MacBook Air, Unity CPU 약 160%). walk 모드는 이 부하에서 RTF 0.5 기동 중 전도, RTF 0.25에서는 서서 걸었다.
 
+### Docker (2대 분리 시연·팀원 재현성)
+
+위 스크립트를 컨테이너 하나에서 그대로 돌린다(Gazebo·ROS 노드·브리지·대시보드). 저장소 루트에서:
+
+```bash
+docker compose up --build             # 기본 MODE=legged WORLD=unity_plant, 첫 빌드 MacBook Air M4 약 4분
+MODE=walk RTF=0.5 docker compose up   # 인자는 스크립트와 같다(MODE·WORLD·RTF·TRAV·SLOPE_DEG)
+docker compose exec sim bash          # 컨테이너 안 셸(ros2·gz 명령)
+docker compose down
+```
+
+- 이미지는 노트북마다 직접 빌드한다. 베이스가 멀티 아키텍처 `ros:jazzy-ros-base`라 맥(arm64)·Windows(amd64) 모두 네이티브로 돈다.
+- 호스트 포트는 `127.0.0.1:9090·8090·8080`에만 열린다. `unity/compose.yaml`(rosbridge)과 포트가 같아 둘 중 하나만 띄운다.
+- 컨테이너에는 GPU가 없어 LiDAR·카메라·열화상을 CPU로 렌더링한다. MacBook Air M4(Docker 5 CPU·8 GB) 실측 RTF 0.44(네이티브 헤드리스 0.70~0.85), 같은 맥에서 Unity Play를 같이 돌리면 0.085(네이티브 0.112, 2026-11-28). 그래서 Unity는 다른 노트북에서 돌린다.
+
+**다른 노트북의 Unity를 붙이기** — 포트를 LAN에 열지 않고 SSH 터널로 같은 로컬 포트를 끌어온다. Gazebo 노트북에서 SSH 서버를 켠다(맥: 시스템 설정 → 일반 → 공유 → 원격 로그인, Windows: 설정 → 시스템 → 선택적 기능 → OpenSSH 서버). Unity 노트북에서:
+
+```bash
+ssh -N -L 9090:127.0.0.1:9090 -L 8090:127.0.0.1:8090 -L 8080:127.0.0.1:8080 <사용자>@<Gazebo 노트북 IP>
+```
+
+터널을 켜 둔 채 `Plant_GazeboMirror`를 Play한다. Unity(`ws://127.0.0.1:9090`)·대시보드(`http://127.0.0.1:8080/?world=unity`)는 주소를 바꾸지 않아도 된다.
+
 **월드 재생성** — Unity 배치를 바꿨을 때: Play를 끈 상태에서 **Doosan → ROS 2 → Export Gazebo Layout**(Unity 프로젝트 `GazeboLayout/unity_plant_layout.json`) → 저장소 `unity/config/gazebo_layout.json`으로 복사 → `python3 simulation/scripts/unity_layout_to_sdf.py unity/config/gazebo_layout.json`. `simulation/worlds/unity_plant.sdf`와 `patrol_path/config/waypoints_unity_plant.yaml`(`config/inspection_route.json`에서)이 다시 생긴다. 0.1 m 격자로 바닥 높이(계단·적재물)는 높이 기둥, 경사로(5~25° 직사각형 평면)는 기울인 판 하나, 바닥 + 0.3~2.3 m를 막는 것은 벽 박스로 만든다. 경사로 그레이팅 구멍은 양쪽 바닥으로 메운다.
 
 ## 구현 범위

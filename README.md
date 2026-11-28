@@ -61,6 +61,8 @@ python3 -m http.server 8080
 
 ## Docker
 
+Gazebo 미러(Unity 연결)·맥/Windows: 저장소 루트에서 `docker compose up --build` — 2대 분리 시연 방법은 [unity/ROS2.md](unity/ROS2.md) "Docker". 아래 `--network host`·X11 예시는 Linux 전용이다.
+
 ```bash
 docker build -t doosan-quadruped .
 docker run --rm -it --network host \
