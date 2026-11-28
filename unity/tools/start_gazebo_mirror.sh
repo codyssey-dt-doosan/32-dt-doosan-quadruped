@@ -15,15 +15,20 @@ SLOPE_DEG="${SLOPE_DEG:-0.0}"
 # 경사로 통과 판정(⑤-2): unity_plant는 위층 순찰이라 기본으로 켠다 — 켜면 /elevation_map 값이 막힘 표시
 if [ "$WORLD" = "unity_plant" ]; then TRAV="${TRAV:-true}"; else TRAV="${TRAV:-false}"; fi
 RTF="${RTF:-0.5}"
+# 컨테이너(compose.yaml)는 0.0.0.0 — 호스트 노출은 compose의 127.0.0.1 포트 매핑이 막는다
+BIND_HOST="${BIND_HOST:-127.0.0.1}"
 
-export PATH="/opt/homebrew/Caskroom/miniforge/base/envs/ros_env/bin:$PATH"
 # macOS: prevent Gazebo Transport & FastDDS multicast failures
 export GZ_IP=127.0.0.1
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-# shellcheck disable=SC1091
-source /opt/homebrew/Caskroom/miniforge/base/etc/profile.d/conda.sh
-conda activate ros_env
+CONDA_SH=/opt/homebrew/Caskroom/miniforge/base/etc/profile.d/conda.sh
+if [ -f "$CONDA_SH" ]; then   # 맥 conda ros_env. Docker는 /opt/ros/jazzy가 이미 잡혀 있다
+  export PATH="/opt/homebrew/Caskroom/miniforge/base/envs/ros_env/bin:$PATH"
+  # shellcheck disable=SC1090
+  source "$CONDA_SH"
+  conda activate ros_env
+fi
 # shellcheck disable=SC1091
 source "$REPO_ROOT/install/setup.bash"
 
@@ -37,11 +42,11 @@ fi
 GZ_PID=$!
 
 echo "=== Starting Native Gazebo <-> Unity <-> Three.js Bridge (:9090 WS, :8090 MJPEG) ==="
-python3 "$REPO_ROOT/unity/tools/gazebo_unity_bridge.py" --host 127.0.0.1 --ws-port 9090 --video-port 8090 &
+python3 "$REPO_ROOT/unity/tools/gazebo_unity_bridge.py" --host "$BIND_HOST" --ws-port 9090 --video-port 8090 &
 BRIDGE_PID=$!
 
 echo "=== Starting Three.js Monitoring Dashboard (:8080) ==="
-(cd "$REPO_ROOT/monitoring/web" && exec python3 -m http.server 8080 --bind 127.0.0.1) &
+(cd "$REPO_ROOT/monitoring/web" && exec python3 -m http.server 8080 --bind "$BIND_HOST") &
 WEB_PID=$!
 
 cleanup() {

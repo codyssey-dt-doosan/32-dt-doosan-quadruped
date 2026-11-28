@@ -1,0 +1,24 @@
+# Gazebo + ROS 2 스택 + Unity 미러 브리지를 한 컨테이너로 — 2대 분리 시연·팀원 재현성 (README "Docker")
+# MODE·WORLD·RTF·TRAV·SLOPE_DEG는 호스트에 설정했을 때만 넘어가고, 기본값은 start_gazebo_mirror.sh에 있다
+# unity/compose.yaml(rosbridge)과 같은 호스트 포트 9090·8090을 쓴다 — 하나만 띄운다
+services:
+  sim:
+    build: .
+    image: doosan-quadruped:local
+    init: true
+    ports:
+      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:8080:8080"
+    environment:
+      BIND_HOST: 0.0.0.0
+      # docker compose exec 셸도 스택과 같은 DDS·gz 설정으로 붙게 (스크립트 export와 같은 값)
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      GZ_IP: 127.0.0.1
+      MODE:
+      WORLD:
+      RTF:
+      TRAV:
+      SLOPE_DEG:
+    command: [bash, /workspace/unity/tools/start_gazebo_mirror.sh]

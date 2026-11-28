@@ -1,5 +1,6 @@
 # Ubuntu 24.04 + ROS 2 Jazzy + Gazebo Harmonic
-FROM osrf/ros:jazzy-desktop
+# osrf/ros:jazzy-desktop은 amd64만 배포돼 Apple Silicon에서 에뮬레이션으로 돈다 — 멀티 아키텍처 ros-base + ros-jazzy-desktop(같은 내용)
+FROM ros:jazzy-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Seoul \
@@ -11,6 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # 미러가 간헐적으로 400/해시 오류를 내므로 다운로드를 재시도한다.
 RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
     && apt-get update && apt-get install -y --no-install-recommends \
+    ros-jazzy-desktop \
     ros-jazzy-ros-gz \
     ros-jazzy-ros-gz-bridge \
     ros-jazzy-ros-gz-sim \
@@ -25,10 +27,20 @@ RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
     python3-colcon-common-extensions \
     python3-opencv \
     python3-yaml \
+    ros-jazzy-rmw-cyclonedds-cpp \
+    python3-aiohttp \
+    python3-scipy \
+    python3-jinja2 \
+    python3-joblib \
     && rm -rf /var/lib/apt/lists/*
+
+# walk_node 힘 QP(osqp 1.x API). --no-deps: pip가 setuptools를 올리면 colcon --symlink-install이 깨진다
+RUN pip install --no-cache-dir --no-deps --break-system-packages osqp==1.1.3
 
 WORKDIR /workspace
 COPY . /workspace
+# Windows(Git 기본 autocrlf)로 clone하면 .sh가 CRLF라 bash가 문법 오류로 죽는다
+RUN sed -i 's/\r$//' /workspace/unity/tools/*.sh
 
 RUN . /opt/ros/jazzy/setup.sh && colcon build --symlink-install
 
