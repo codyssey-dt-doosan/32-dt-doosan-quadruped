@@ -87,6 +87,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.resume and a.init_from:
         ap.error("--resume과 --init-from은 같이 쓸 수 없다")
+    if a.init_optimizer and not a.init_from:
+        ap.error("--init-optimizer는 --init-from과 같이 쓴다")
     if a.init_from and not a.init_from.is_file():  # run 폴더를 만들기 전에
         ap.error(f"--init-from {a.init_from} 없음")
 

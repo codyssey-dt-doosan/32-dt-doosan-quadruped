@@ -135,6 +135,13 @@ def test_init_from_resume_exclusive(tmp_path, capsys):  # --resume은 같은 run
     assert not any(tmp_path.iterdir())
 
 
+def test_init_optimizer_needs_init_from(tmp_path, capsys):  # --init-optimizer만 주면 조용히 무시되지 않게 — Genesis 빌드 전에 거부
+    with pytest.raises(SystemExit):
+        train.main(["-e", "x", "--log-dir", str(tmp_path), "--init-optimizer"])
+    assert "--init-from과 같이" in capsys.readouterr().err
+    assert not any(tmp_path.iterdir())
+
+
 def test_export_meta_init_from(env, tmp_path):  # 파인튜닝 run을 내보내면 npz에도 출발 체크포인트가 남는다
     run = tmp_path / "rough_v2"
     run.mkdir()
