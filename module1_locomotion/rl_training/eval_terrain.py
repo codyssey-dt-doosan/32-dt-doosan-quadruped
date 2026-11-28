@@ -14,7 +14,7 @@ import torch
 import genesis as gs
 
 import cfgs
-from eval_slope import wrap_pi, yaw_pitch
+from eval_slope import SEED, wrap_pi, yaw_pitch
 from export import drift, make_runner
 
 TYPES = ["stairs_up", "stairs_down", "slope_up", "slope_down", "pipes"]
@@ -58,6 +58,7 @@ def run(env, policy, seconds):
     t = env.terrain
     r3, rf = radii(t)
     env.levels[:] = 1  # 시험값 행만
+    torch.manual_seed(SEED)
     obs = env.reset()
     p0, yaw0 = perturb(env)
     n = env.num_envs

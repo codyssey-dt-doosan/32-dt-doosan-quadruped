@@ -20,6 +20,7 @@ TYPES = ["flat", "slope_up", "slope_down"]
 YAWS = [0.0, 2.5, -2.5, 5.0, -5.0, 10.0, -10.0, 0.0]  # 출발 yaw [°]
 TILE, CMD_V, SECONDS = 6.65, 0.3, 30.0
 W_MEAN_MAX, W_ABS_MAX, PITCH_ERR_MAX, FLAT_W_MAX = 0.004, 0.008, 3.0, 0.004  # 관문 [rad/s]·[rad/s]·[°]·[rad/s]
+SEED = 0  # 롤아웃 직전 전역 torch 시드 — env 생성 때 RNG를 몇 번 쓰든 같은 ckpt면 같은 수치(리스폰 타일 randint 등)
 
 
 def yaw_pitch(q):
@@ -75,6 +76,7 @@ def measure(run_dir, ckpt, deg):
     env._resample_commands = lambda envs_idx: None
     env.commands[:] = torch.tensor([CMD_V, 0.0, 0.0], device=gs.device)
     env.levels[:] = 1
+    torch.manual_seed(SEED)
     obs = env.reset()
     n = env.num_envs
     psi0 = torch.tensor(YAWS, device=gs.device)[torch.arange(n, device=gs.device) % len(YAWS)] * math.pi / 180
