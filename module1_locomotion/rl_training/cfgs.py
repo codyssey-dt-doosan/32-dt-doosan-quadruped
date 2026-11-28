@@ -47,7 +47,7 @@ def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[d
         "feet_air_time_target": 0.25,
         "reward_scales": {
             "tracking_lin_vel": 1.0,
-            "tracking_ang_vel": 0.2,
+            "tracking_ang_vel": 0.5,  # rough_v2: 0.2 → 0.5, G3 경사에서 늘 + 방향으로 돌던 회전 편향 대책
             "lin_vel_z": -1.0,
             "base_height": -50.0,
             "action_rate": -0.005,
@@ -64,6 +64,7 @@ def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[d
         "lin_vel_x_range": s2s["commands"]["lin_vel_x"],
         "lin_vel_y_range": s2s["commands"]["lin_vel_y"],
         "ang_vel_range": s2s["commands"]["ang_vel"],
+        "zero_ang_vel_prob": 0.3,  # rough_v2: 재표본 명령의 30%는 wz = 0(직진 유지를 따로 배운다). 범위는 그대로
     }
     return env_cfg, obs_cfg, reward_cfg, command_cfg
 
@@ -77,6 +78,8 @@ def get_terrain_cfg() -> dict:
 
 
 def get_train_cfg(exp_name: str, max_iterations: int) -> dict:
+    import mirror  # mirror가 모듈 로드 때 cfgs를 import하므로 순환을 피해 여기서
+
     return {
         "algorithm": {
             "class_name": "PPO",
@@ -92,6 +95,9 @@ def get_train_cfg(exp_name: str, max_iterations: int) -> dict:
             "schedule": "adaptive",
             "use_clipped_value_loss": True,
             "value_loss_coef": 1.0,
+            # rough_v2: 좌우 거울 증강 + 거울 손실(rsl-rl Symmetry). env는 rsl-rl이 복사본에만 넣어 runner.cfg는 pickle된다
+            "symmetry_cfg": {"data_augmentation_func": mirror.data_augmentation, "use_data_augmentation": True,
+                             "use_mirror_loss": True, "mirror_loss_coeff": 1.0},
         },
         "actor": {
             "class_name": "MLPModel",

@@ -185,6 +185,9 @@ class Go2BoxEnv:
 
     def _resample_commands(self, envs_idx):
         commands = gs_rand(*self.commands_limits, (self.num_envs,))
+        # rough_v2: env별 zero_ang_vel_prob 확률로 wz = 0(직진 유지 명령). vx·vy는 그대로
+        zero_wz = torch.rand(self.num_envs, dtype=gs.tc_float, device=gs.device) < self.command_cfg["zero_ang_vel_prob"]
+        commands[:, 2].masked_fill_(zero_wz, 0.0)
         if envs_idx is None:
             self.commands.copy_(commands)
         else:
