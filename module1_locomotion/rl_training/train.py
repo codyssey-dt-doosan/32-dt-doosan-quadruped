@@ -17,6 +17,9 @@ from export import drift, git_head, make_runner
 HERE = Path(__file__).resolve().parent
 # 바뀌면 같은 run을 이어 학습하지 않는다(보상·PPO·env 식·동역학, make_runner의 gs.init, Genesis·rsl_rl 버전)
 CODE = ("go2_box_env.py", "cfgs.py", "mirror.py", "terrain.py", "train.py", "export.py", "assets/go2_box.urdf", "requirements.txt")
+# --init-from 새 Adam의 시작 lr: 첫 걸음이 모든 파라미터를 ≈ lr·sign(g)만큼 움직여 1e-3이면 iter 0 KL ≈ 1(desired 0.01의 100배)
+# → lr이 1e-5 하한으로 붕괴했다(실측). rsl-rl adaptive가 KL < desired/2인 미니배치마다 1.5배씩 올린다
+INIT_FROM_LR = 1e-5
 
 
 def provenance() -> dict:
@@ -57,9 +60,14 @@ def prepare_log_dir(path: Path, resume: bool) -> Path | None:
 
 
 def init_from(runner, path: Path, load_optimizer: bool = False) -> dict:
-    """체크포인트에서 actor·critic(load_optimizer면 optimizer도)만 불러오고 반복 수는 0에 둔다. 출처(run·ckpt·sha256·optimizer)를 돌려준다."""
+    """체크포인트에서 actor·critic(load_optimizer면 optimizer와 그 lr도)만 불러오고 반복 수는 0에 둔다.
+    optimizer를 안 불러오면 새 Adam을 INIT_FROM_LR로 시작한다. 출처(run·ckpt·sha256·optimizer)를 돌려준다."""
     runner.load(str(path), load_cfg={"actor": True, "critic": True, "optimizer": load_optimizer, "iteration": False},
                 map_location=runner.device)
+    if not load_optimizer:
+        runner.alg.learning_rate = INIT_FROM_LR
+        for g in runner.alg.optimizer.param_groups:
+            g["lr"] = INIT_FROM_LR
     return {"run": path.parent.name, "ckpt": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "optimizer": load_optimizer}
 

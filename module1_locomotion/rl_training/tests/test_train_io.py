@@ -86,11 +86,12 @@ def new_runner(env, scramble=False):  # 새 runner = 새 Adam. scramble이면 �
 
 @pytest.fixture
 def ckpt(env, tmp_path):
-    """옛 run의 체크포인트: Adam 한 걸음으로 optimizer state를 채우고 iter 7로 저장."""
+    """옛 run의 체크포인트: Adam 한 걸음으로 optimizer state를 채우고 lr 3e-4(기본 1e-3·INIT_FROM_LR과 구별)·iter 7로 저장."""
     runner = new_runner(env)
     opt = runner.alg.optimizer
     sum((p ** 2).sum() for p in opt.param_groups[0]["params"]).backward()
     opt.step()
+    opt.param_groups[0]["lr"] = 3e-4
     runner.current_learning_iteration = 7
     (tmp_path / "rough_v1").mkdir()
     runner.save(str(path := tmp_path / "rough_v1" / "model_7.pt"))
@@ -101,6 +102,10 @@ def same(a: dict, b: dict) -> bool:  # state_dict 텐서별 비교
     return a.keys() == b.keys() and all(torch.equal(a[k], b[k]) for k in a)
 
 
+def lrs(runner) -> set:  # PPO가 쓰는 lr과 optimizer param_group들의 lr
+    return {runner.alg.learning_rate} | {g["lr"] for g in runner.alg.optimizer.param_groups}
+
+
 def test_init_from_weights_only(env, ckpt):  # 보상이 바뀐 파인튜닝: 옛 보상의 Adam 모멘텀·반복 수는 가져오지 않는다
     saved = torch.load(ckpt, weights_only=False)
     runner = new_runner(env, scramble=True)
@@ -109,6 +114,7 @@ def test_init_from_weights_only(env, ckpt):  # 보상이 바뀐 파인튜닝: �
     assert same(runner.alg.actor.state_dict(), saved["actor_state_dict"])
     assert same(runner.alg.critic.state_dict(), saved["critic_state_dict"])
     assert runner.alg.optimizer.state_dict()["state"] == {} and runner.current_learning_iteration == 0
+    assert lrs(runner) == {1e-5}  # 새 Adam의 첫 걸음(≈ lr·sign(g))이 KL을 튀기지 않게 낮게 시작 — adaptive가 올린다
     assert info == {"run": "rough_v1", "ckpt": "model_7.pt", "sha256": hashlib.sha256(ckpt.read_bytes()).hexdigest(),
                     "optimizer": False}
 
@@ -119,6 +125,7 @@ def test_init_from_with_optimizer(env, ckpt):
     assert train.init_from(runner, ckpt, load_optimizer=True)["optimizer"] is True
     state = runner.alg.optimizer.state_dict()["state"]
     assert saved and state.keys() == saved.keys() and all(same(state[i], saved[i]) for i in saved)
+    assert lrs(runner) == {3e-4}  # 불러온 optimizer의 lr을 그대로 쓴다
 
 
 def test_init_from_resume_exclusive(tmp_path, capsys):  # --resume은 같은 run을 잇고 --init-from은 새 run — Genesis 빌드 전에 거부
