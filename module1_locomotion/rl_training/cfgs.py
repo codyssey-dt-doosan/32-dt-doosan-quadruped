@@ -45,6 +45,7 @@ def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[d
         "tracking_sigma": 0.0625,
         "base_height_target": s2s["base_init_z"],
         "feet_air_time_target": 0.25,
+        "normal_baseline": 0.25,  # rough_v2: 지형 법선 중앙차분 ±기준 길이 [m](몸통 반 길이 0.30 근처)
         "reward_scales": {
             "tracking_lin_vel": 1.0,
             "tracking_ang_vel": 0.5,  # rough_v2: 0.2 → 0.5, G3 경사에서 늘 + 방향으로 돌던 회전 편향 대책
@@ -57,6 +58,7 @@ def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[d
             "collision": -1.0,
             "torques": -1e-4,
             "dof_power": -2e-5,
+            "terrain_orientation": -5.0,  # rough_v2: 지형 법선 기준 자세. 자세 항이 없어 내리막에서 5~7° 덜 숙이던 것 대책
         },
     }
     command_cfg = {

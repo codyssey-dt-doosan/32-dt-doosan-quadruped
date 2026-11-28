@@ -22,6 +22,12 @@ def gs_rand(lower, upper, batch_shape):
     return (upper - lower) * torch.rand(size=(*batch_shape, *lower.shape), dtype=gs.tc_float, device=gs.device) + lower
 
 
+def orientation_error(normal, quat):
+    """지형 단위 법선 n (n, 3)과 몸체 up 축 z_b(quat wxyz (n, 4)로 돌린 (0, 0, 1))의 어긋남 1 − (n·z_b)² (n)."""
+    z_b = transform_by_quat(normal.new_tensor([0.0, 0.0, 1.0]), quat)
+    return 1 - torch.sum(normal * z_b, dim=1) ** 2
+
+
 class Go2BoxEnv:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
         self.num_envs: int = num_envs
@@ -252,6 +258,16 @@ class Go2BoxEnv:
             return torch.zeros(xy.shape[:-1], dtype=gs.tc_float, device=gs.device)
         return self.ground.get_terrain_height(torch.clamp(xy, self.hf_lo, self.hf_hi))
 
+    def terrain_normal(self, xy):
+        """월드 xy (n, 2)의 지형 단위 법선 (n, 3). ±normal_baseline 중앙차분 기울기 g로 (−g_x, −g_y, 1)을 정규화한다.
+        높이는 ground_height로 조회한다(heightfield 밖은 잘라서, plane이면 0 → (0, 0, 1)). 계단은 단 모서리가 아니라 평균 경사가 된다.
+        지형 모드에서 n은 num_envs 또는 1이다(Genesis get_terrain_height 규약). n = 1이면 모든 env로 퍼져 (num_envs, 3)이 된다."""
+        b = self.reward_cfg["normal_baseline"]
+        d = torch.tensor([[b, 0.0], [-b, 0.0], [0.0, b], [0.0, -b]], dtype=gs.tc_float, device=gs.device)
+        h = self.ground_height(xy[:, None, :] + d)
+        g = torch.stack((h[:, 0] - h[:, 1], h[:, 2] - h[:, 3]), dim=1) / (2 * b)
+        return torch.nn.functional.normalize(torch.cat((-g, torch.ones_like(g[:, :1])), dim=1), dim=1)
+
     def _feet_height(self):
         """발 구 중심(calf 링크 원점 + R·CALF_FOOT)의 지면 위 높이 [m] (n, 4), FL·FR·RL·RR."""
         foot = self.robot.get_links_pos(self.calf_links_idx) + transform_by_quat(
@@ -443,6 +459,10 @@ class Go2BoxEnv:
         # Penalize base height above ground away from target
         ground = self.ground_height(self.base_pos[:, None, :2])[:, 0]
         return torch.square(self.base_pos[:, 2] - ground - self.reward_cfg["base_height_target"])
+
+    def _reward_terrain_orientation(self):
+        # 몸체 up 축의 지형 법선 수직 성분² = 1 − (n·z_b)². plane이면 수평 자세 벌점
+        return orientation_error(self.terrain_normal(self.base_pos[:, :2]), self.base_quat)
 
     def _reward_feet_air_time(self):
         # 착지한 발마다 (공중 시간 − 목표), 이동 명령(|v_cmd| > 0.1)일 때만
