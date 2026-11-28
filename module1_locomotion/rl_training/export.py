@@ -75,6 +75,8 @@ def main(argv=None) -> int:
     train = json.loads(prov.read_text()) if prov.exists() else {}
     meta = {"run": a.run_dir.resolve().name, "ckpt": a.ckpt, "iteration": runner.current_learning_iteration, "git": git_head(),
             "train_git": train.get("git", "unknown"), "train_dirty": train.get("dirty")}
+    if "init_from" in train:  # train.py --init-from으로 시작한 run의 출발 체크포인트
+        meta["init_from"] = train["init_from"]
     export_actor(runner, cfgs.load_sim2sim(), a.out, meta)
     print(f"{a.out} {a.out.stat().st_size / 1e6:.2f} MB {meta}")
     return 0

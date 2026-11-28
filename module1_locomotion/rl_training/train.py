@@ -1,6 +1,7 @@
-"""PPO 학습. 사용: python train.py -e EXP [-b 4096] [--max-iterations N] [--log-dir DIR] [--resume] [--save-interval 50] [--cpu] [--terrain]
+"""PPO 학습. 사용: python train.py -e EXP [-b 4096] [--max-iterations N] [--log-dir DIR] [--resume | --init-from PATH [--init-optimizer]] [--save-interval 50] [--cpu] [--terrain]
 실행 폴더 = <log-dir>/<EXP>. 같은 실험명이 있으면 지우지 않고 거부한다(--resume로 이어 학습).
---resume은 sim2sim.json과 학습 코드(provenance.json)가 run 시작 때와 같을 때만 이어 간다."""
+--resume은 sim2sim.json과 학습 코드(provenance.json)가 run 시작 때와 같을 때만 이어 간다.
+--init-from은 새 run을 다른 run 체크포인트의 actor·critic 가중치로 시작한다(optimizer 초기화·iteration 0, 출처는 provenance.json init_from)."""
 import argparse
 import hashlib
 import json
@@ -55,7 +56,15 @@ def prepare_log_dir(path: Path, resume: bool) -> Path | None:
     return None
 
 
-def main():
+def init_from(runner, path: Path, load_optimizer: bool = False) -> dict:
+    """체크포인트에서 actor·critic(load_optimizer면 optimizer도)만 불러오고 반복 수는 0에 둔다. 출처(run·ckpt·sha256·optimizer)를 돌려준다."""
+    runner.load(str(path), load_cfg={"actor": True, "critic": True, "optimizer": load_optimizer, "iteration": False},
+                map_location=runner.device)
+    return {"run": path.parent.name, "ckpt": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "optimizer": load_optimizer}
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("-e", "--exp-name", required=True)
     ap.add_argument("-b", "--num-envs", type=int, default=4096)
@@ -65,7 +74,13 @@ def main():
     ap.add_argument("--save-interval", type=int, default=50)
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--terrain", action="store_true", help="지형 커리큘럼(cfgs.get_terrain_cfg), 없으면 평지")
-    a = ap.parse_args()
+    ap.add_argument("--init-from", type=Path, help="새 run을 이 체크포인트의 actor·critic 가중치로 시작(보상이 바뀐 파인튜닝)")
+    ap.add_argument("--init-optimizer", action="store_true", help="--init-from에서 optimizer 상태까지 불러온다")
+    a = ap.parse_args(argv)
+    if a.resume and a.init_from:
+        ap.error("--resume과 --init-from은 같이 쓸 수 없다")
+    if a.init_from and not a.init_from.is_file():  # run 폴더를 만들기 전에
+        ap.error(f"--init-from {a.init_from} 없음")
 
     prov, s2s = provenance(), cfgs.load_sim2sim()  # Genesis 빌드(수십 초) 전, 이 프로세스가 import한 코드 기준
     run_dir = a.log_dir / a.exp_name
@@ -80,6 +95,8 @@ def main():
     runner = make_runner(a.num_envs, a.cpu, dr=True, log_dir=str(run_dir), train_cfg=train_cfg,
                          terrain=cfgs.get_terrain_cfg() if a.terrain else None)  # env_cfg["terrain"]
     if ckpt is None:
+        if a.init_from:
+            prov["init_from"] = init_from(runner, a.init_from.resolve(), a.init_optimizer)  # 상대 경로도 run 이름이 남게
         env = runner.env
         with open(run_dir / "cfgs.pkl", "wb") as f:
             pickle.dump([env.env_cfg, env.obs_cfg, env.reward_cfg, env.command_cfg, runner.cfg], f)
