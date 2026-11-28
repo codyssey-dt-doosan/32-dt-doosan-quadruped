@@ -42,12 +42,16 @@ def classify_reset(done, r, half):
 
 
 def gate(stats: dict) -> tuple[bool, list[str]]:
-    """stats[(deg, kind)] = {"w": run마다 경사 위 평균 yaw 속도 [rad/s], "pitch_err": [°]}. 없는 키는 판정하지 않는다. (통과, 실패 사유)."""
+    """stats[(deg, kind)] = {"w": run마다 경사 위 평균 yaw 속도 [rad/s], "pitch_err": [°]}. 경사 위에 못 들어간 run은 NaN —
+    기록이 비었거나 NaN이 하나라도 있으면 실패(fail-closed). 없는 키는 판정하지 않는다. (통과, 실패 사유)."""
     why = []
     for (deg, kind), s in stats.items():
         w = s["w"]
         if not w:
             why.append(f"{deg:g}° {kind} 경사 위 기록 없음")
+            continue
+        if bad := sum(not math.isfinite(v) for v in w):
+            why.append(f"{deg:g}° {kind} 경사 위에 못 들어간 run {bad}/{len(w)}")
             continue
         w_abs = max(abs(v) for v in w)
         if kind == "flat":
@@ -67,7 +71,7 @@ def gate(stats: dict) -> tuple[bool, list[str]]:
 
 def measure(run_dir, ckpt, deg):
     """경사 deg° scene에서 TYPES × YAWS를 SECONDS 걷게 한다. +x 끝이 border라 타일 끝을 넘으면 리셋된다(이탈, 그 뒤는 세지 않는다).
-    env마다 타입·경사 위 시간 [s]·Δψ [rad]·Δy [m]·평균 피치 [rad]·전도·이탈을 dict로 돌려준다."""
+    env마다 타입·경사 위 시간 [s]·Δψ [rad]·Δy [m]·평균 피치 [rad](경사 위에 못 들어갔으면 NaN)·전도·이탈을 dict로 돌려준다."""
     t = {**cfgs.get_terrain_cfg(), "rows": 2, "cols": TYPES, "slope_deg_max": deg, "tile": TILE}
     runner = make_runner(len(YAWS) * len(TYPES), False, dr=False, terrain=t, episode_length_s=SECONDS + 1.0)  # 시간 초과 리셋 없음
     runner.load(str(run_dir / ckpt), map_location=runner.device)
@@ -111,7 +115,7 @@ def measure(run_dir, ckpt, deg):
             s["pitch_sum"][on] += pitch[on]
             s["cnt"][on] += 1
     return {"type": env.types, "t_on": s["cnt"] * env.dt, "dpsi": s["dpsi"], "dy": s["dy"],
-            "pitch": s["pitch_sum"] / s["cnt"].clamp(min=1), "fell": fell, "exited": exited}
+            "pitch": s["pitch_sum"] / s["cnt"], "fell": fell, "exited": exited}
 
 
 def main(argv=None) -> int:
@@ -135,9 +139,7 @@ def main(argv=None) -> int:
             st = stats[(deg, kind)] = {"w": [], "pitch_err": []}
             for j in torch.nonzero(m["type"] == k).flatten().tolist():
                 t_on = m["t_on"][j].item()
-                if t_on <= 0:
-                    continue
-                w = m["dpsi"][j].item() / t_on
+                w = m["dpsi"][j].item() / t_on if t_on > 0 else math.nan  # 못 들어간 run도 남겨 gate가 실패로 센다
                 pit = math.degrees(m["pitch"][j].item())
                 err = pit + {"slope_up": deg, "slope_down": -deg}.get(kind, 0.0)  # pitch +는 머리 숙임: 내리막 = 피치 − deg
                 st["w"].append(w)
