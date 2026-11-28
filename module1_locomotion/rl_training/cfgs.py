@@ -58,7 +58,7 @@ def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[d
             "collision": -1.0,
             "torques": -1e-4,
             "dof_power": -2e-5,
-            "terrain_orientation": -5.0,  # rough_v2: 지형 법선 기준 자세. 자세 항이 없어 내리막에서 5~7° 덜 숙이던 것 대책
+            "terrain_orientation": -20.0,  # 지형 법선 기준 자세(rough_v2 −5 → rough_v3 −20: −5는 후반에 효과가 거의 없었다)
         },
     }
     command_cfg = {
