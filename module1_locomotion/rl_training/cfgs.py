@@ -99,7 +99,7 @@ def get_train_cfg(exp_name: str, max_iterations: int) -> dict:
             "value_loss_coef": 1.0,
             # rough_v2: 좌우 거울 증강 + 거울 손실(rsl-rl Symmetry). env는 rsl-rl이 복사본에만 넣어 runner.cfg는 pickle된다
             "symmetry_cfg": {"data_augmentation_func": mirror.data_augmentation, "use_data_augmentation": True,
-                             "use_mirror_loss": True, "mirror_loss_coeff": 1.0},
+                             "use_mirror_loss": True, "mirror_loss_coeff": 10.0},
         },
         "actor": {
             "class_name": "MLPModel",

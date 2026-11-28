@@ -35,7 +35,7 @@ def test_reward_and_command_values():
 def test_symmetry_cfg():
     s = cfgs.get_train_cfg("x", 1)["algorithm"]["symmetry_cfg"]
     assert s == {"data_augmentation_func": mirror.data_augmentation, "use_data_augmentation": True,
-                 "use_mirror_loss": True, "mirror_loss_coeff": 1.0}
+                 "use_mirror_loss": True, "mirror_loss_coeff": 10.0}
     assert s["data_augmentation_func"] is mirror.data_augmentation
 
 
