@@ -51,7 +51,13 @@ uv pip install -r requirements.txt
 python eval.py --run-dir DIR --ckpt model_N.pt          # G1 평지: 4조합 × 15 s, DR 없음. 오차 <10%·전도 0이면 PASS
 python eval_terrain.py --run-dir DIR --ckpt model_N.pt  # 시험값 난이도(정보용): 계단 0.10 m·경사 20°·파이프 0.08 m, v 0.3 × 20 s
 python export.py --run-dir DIR --ckpt model_N.pt --out ../mpc_controller/policies/NAME.npz
+python eval_slope.py --run-dir DIR --ckpt model_N.pt [--deg 20 15]  # Genesis 경사 관문(Gazebo 전): 마지막 줄 GATE PASS/FAIL, 종료 코드 0/1
+python train.py -e NEW --terrain --init-from RUN/model_N.pt  # 파인튜닝: 새 run에 actor·critic 가중치만, optimizer는 새로(첫 lr 1e-5), iter 0부터
 ```
+
+- `eval_slope.py`: tile 6.65 m 경사(20°·15°)·평지에서 출발 yaw 거울쌍 {0, ±2.5, ±5, ±10°}, 명령 (0.3, 0, 0), DR 없음. 경사 띠 위 평균 회전 ω·피치 오차(내리막 = 평균 피치 − 경사각, 오르막 = 평균 피치 + 경사각, 기수 내림이 +)를 run마다 잰다. 관문: 경사 |mean ω| ≤ 0.004·max |ω| ≤ 0.008, 내리막 모든 run |피치 오차| ≤ 3°, 평지 max |ω| ≤ 0.004. 띠에 못 들어간 run은 NaN으로 남아 FAIL이다. 타일 끝 이탈(체비셰프 r ≥ 반폭 − 0.1)은 전도로 세지 않는다
+- `eval_terrain.py`·`eval_slope.py`는 롤아웃 직전 `torch.manual_seed(0)`으로 시드한다. 그 전에는 env 생성 때 쓰는 난수 하나가 늘어도 결과가 바뀌었다(rough_v2 브랜치에서 model_2800 계단 오르기 완주가 3/8 → 4/8, 물리는 같음). 같은 체크포인트는 시드 뒤 코드에서 다시 잰 값끼리 비교한다
+- `--init-from`은 `--resume`과 같이 쓸 수 없고, `--init-optimizer`는 `--init-from`과만 쓴다. 출처(run·ckpt·sha256·optimizer)는 `provenance.json`과 npz meta의 `init_from`에 남는다
 
 - `eval_terrain.py`: 학습 타일 생성기(`terrain.py`)를 rows 2로 써서 난이도 1.0 행이 시험값이 되게 한다. 타입(계단 오르기·내리기, 경사 오르기·내리기, 파이프)마다 8 env를 출발 xy ±0.3 m·yaw ±10°로 흔든다(DR이 없으면 같은 타일 env가 똑같이 움직인다). 타일 가운데에서의 체비셰프 진행으로 3단 상당(1.4 m)·타일 끝(2.45 m) 도달과 전도를 센다. 타일 계단은 6단이라 Gazebo 코스(3단)보다 길다 — G3를 대신하지 않는다
 - `eval.py`는 32 env가 같은 조건이라 사실상 1회 시행이다. 이웃 체크포인트끼리 PASS·FAIL이 오가는 것도 그 탓으로 보인다
@@ -78,6 +84,34 @@ python export.py --run-dir DIR --ckpt model_N.pt --out ../mpc_controller/policie
   - ② **내리막에서 몸이 지형보다 5~7° 덜 숙는다.** 헤딩과 무관하다. 곧게 간 15° 3회차도 −5.06°였다.
   - ③ **파이프를 넘는 동안 0.11~0.22 m/s로 느려진다.**
   - 배포 쪽(중력 투영 부호·프레임, 경사로 형상)은 학습과 같음을 코드로 확인했다. ①이 정책 고유인지 Sim2Sim 차이인지는 Genesis에서 횡 이동·헤딩을 재야 가린다. 지금 `eval_terrain.py`는 진행만 잰다
+  - 정정(rough_v2 설계 때 확인): ②를 "중력 기준 수평 페널티 때문"이라고 적은 적이 있으나 틀렸다. rough_v1 보상 10개에는 몸 기울기 항이 아예 없다. Genesis `eval_slope.py`에서도 20° 내리막 ω +0.067~+0.086 rad/s·피치 오차 −5~−7°로 재현돼 정책 고유다
+
+### rough_v2·rough_v3 (파인튜닝, 2026-11-28)
+
+model_2800에서 ①·②·③을 잡으려고 파인튜닝했다(설계·계획: vault `DT-작업노트-2026-11-28-RL-rough_v2-설계`·`-계획`).
+
+- 변경: 회전 추종 `tracking_ang_vel` 0.2 → 0.5, 재표본 명령의 30%는 wz = 0, rsl-rl `Symmetry`(좌우 거울 증강 + 거울 손실, `mirror.py`), 지형 법선 자세 보상 `terrain_orientation`(1 − (n·z_b)², n은 base xy ±0.25 m 중앙차분), 파이프 열 2개(8열), 시작 레벨 상한 3 → 6, `--init-from`(가중치만, 새 Adam 첫 lr 1e-5)
+- 자세 보상은 "판정에 맞춘 보상"이다. G3 경사 판정(지형과 평행 ±5°)에 맞추려고 넣었다
+- 운영: Colab L4, 스모크(151 iter·1024 env) → 같은 VM에서 본 학습(1500 iter·4096 env, 약 5.5만 step/s, 45분). 두 run 모두 VM 회수 없이 끝났고, 스모크·본 학습 4회에 약 5.6 CU를 썼다
+
+| run | 출발 | 자세 보상 | 거울 손실 계수 | 스모크 | 본 학습 마지막 레벨·거울 손실 |
+|---|---|---|---|---|---|
+| rough_v2 | rough_v1 model_2800 | −5 | 1 | 안정(6항목 PASS) | 5.65 · 6e-4 |
+| rough_v3 | rough_v2 model_1050 | −20 | 10 | 안정(6항목 PASS) | 5.44 · 2e-4 |
+
+- Genesis 경사 관문(`eval_slope.py`): rough_v2·rough_v3 모두 1000~1500(50 간격) 22개가 FAIL이다
+  - ① 헤딩 편향은 크게 줄었다. 20° 내리막 평균 ω가 +0.0795(model_2800)에서 v2 1000~1100은 ±0.001~0.002 수준이 됐다. 남은 평균 ω 실패는 체크포인트마다 부호가 바뀌는 잔여 좌우 비대칭이다(추론 때 정확히 대칭화하면 0). max |ω| 실패는 대부분 ±5·±10°로 출발한 run이 경사 아래로 정렬하는 대칭 동작이다
+  - ② 내리막 피치 오차는 v2 −4.0~−6.0°, v3 −3.5~−5.5°로 ±3°를 넘었다. 평지 피치는 v2 −1.2~−2.6°에서 v3 −0.1~−0.2°로 고쳐졌다
+  - 원인 조사: 보상 법선과 진단 피치는 같은 상태에서 0.04° 안에서 일치해 정의·측정 버그가 아니다. 물리적으로 필요한 자세도 아니다 — rough_v2 학습 중간의 model_500은 20° 내리막을 −0.8°·0.26 m/s로, 같은 보상에서 더 높은 점수로 걸었다. 학습이 iter 700~1000을 지나며 몸통을 중력 수평 쪽 3~4°에 두는 걸음새로 굳었고, 자세 가중을 4배로 올려도 경사 오프셋은 약 20%만 줄었다. 붙잡는 압력은 경사 밖 학습 분포(계단 추정)에 있으나 출처는 가르지 못했다
+  - 내리막 수평 속도는 model_2800 0.24~0.26 m/s에서 v2·v3 0.29~0.33으로 명령(0.3)에 가까워졌다
+- 체크포인트 선택(관문 폴백): 미리 정한 기준(실패 항목 수 → 초과분 합)으로는 rough_v2 model_1050(실패 4)이 1위였다. 도훈이 결과를 본 뒤 G3 경사 판정에 직접 걸리는 피치를 우선해 **rough_v3 model_1150**(내리막 피치 오차 −3.5·−3.7°로 최소, 실패 6)을 골랐다. 결과를 본 뒤의 기준 변경이다
+
+| ckpt | 관문 실패 | 20°·15° 내리막 피치 오차 | G1 (최대 오차) | eval_terrain 전도 /40 | 3단 상당 /40 |
+|---|---|---|---|---|---|
+| rough_v2 model_1050 | 4 | −4.9 · −5.3° | PASS (3.9%) | 0 | 37 |
+| **rough_v3 model_1150** | 6 | **−3.5 · −3.7°** | PASS (6.0%) | 2 (계단 내리기) | 35 |
+
+- `model_1150`을 `../mpc_controller/policies/rough_v3.npz`로 export했다(meta `init_from` = rough_v2 model_1050). 경사 자세 대신 계단이 약해졌다(G3에서 계단 전도 위험). Gazebo 결과는 `mpc_controller` README에 있다
 
 ## 테스트
 
@@ -91,4 +125,8 @@ CPU 백엔드, 약 15 s. ROS 쪽 정합 테스트는 `mpc_controller/test/test_s
 - `test_obs_cross.py`: `rl_node`의 관측·행동 식(`mpc_controller/rl_obs.py`, numpy)이 env `obs_buf`·`_q_des`와 1e-5 안으로 같다
 - `test_open_loop.py`: Gazebo가 보낸 q_des 10틱(`tests/data/`)을 개루프로 재생한 관절 RMS가 틱 0~5 <0.02·5~10 <0.08 rad. armature 0.1이면 실패하는 음성 대조 포함
 - `test_eval_terrain.py`: 시험값 행의 형상(계단 단 높이·경사각·파이프 높이)과 완주·전도 latch(먼저 일어난 쪽만 남는다)
-- `test_export.py`·`test_train_io.py`: numpy 정책 = torch actor, `sim2sim.json`이 바뀐 run의 export 거부, 학습 코드 해시 비교(`code_drift`, resume 거부 근거), 출처 meta(`train_git`), 로그 폴더 처리
+- `test_export.py`·`test_train_io.py`: numpy 정책 = torch actor, `sim2sim.json`이 바뀐 run의 export 거부, 학습 코드 해시 비교(`code_drift`, resume 거부 근거), 출처 meta(`train_git`·`init_from`), 로그 폴더 처리, `--init-from` 가중치만·optimizer 새로·첫 lr 1e-5·`--resume`/`--init-optimizer` 조합 거부
+- `test_mirror.py`: 거울 순열·부호(FL↔FR·RL↔RR, hip·vy·wz·roll), mirror(mirror(x)) = x, 증강 배치, Genesis 물리 대칭(거울 행동 10스텝 뒤 관측이 거울, 최대 차 9e-8)
+- `test_rough_v2_cfg.py`: 보상·명령·Symmetry 설정값, 구성 뒤 `runner.cfg` pickle, wz = 0 비율이 두 재표본 경로(reset·4 s)에서 0.3 ± 0.03이고 vx는 그대로
+- `test_terrain_orientation.py`: 1 − (n·z_b)² 값, 20° 경사 법선의 각도·방향, 계단·border·heightfield 밖에서 유한한 단위 법선, plane이면 (0, 0, 1)
+- `test_eval_slope.py`: 관문 규칙(평균만 초과·오르막 피치 비관문·평지 0.004·빈/NaN run FAIL), 전도·이탈 구분, yaw wrap
