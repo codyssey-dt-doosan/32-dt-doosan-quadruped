@@ -73,10 +73,10 @@ def get_cfgs(s2s: dict, dr: bool = True, terrain: dict | None = None) -> tuple[d
 
 def get_terrain_cfg() -> dict:
     # 지형 커리큘럼(스펙 §4.2, 학습 전용). 행 = 난이도, 열 = 타입. 상한은 §5 시험값(계단 0.10·파이프 0.08)보다 크게
-    return {"rows": 10, "cols": ["flat", "rough", "slope_up", "slope_down", "stairs_up", "stairs_down", "pipes"],
+    return {"rows": 10, "cols": ["flat", "rough", "slope_up", "slope_down", "stairs_up", "stairs_down", "pipes", "pipes"],
             "tile": 5.0, "hs": 0.05, "vs": 0.005, "border": 2.5, "platform": 1.0, "slope_deg_max": 25.0,
             "step_h_max": 0.12, "tread": 0.30, "pipe_d_max": 0.10, "pipe_gap": 0.6, "rough_max": 0.04,
-            "max_init_level": 3}
+            "max_init_level": 6}
 
 
 def get_train_cfg(exp_name: str, max_iterations: int) -> dict:

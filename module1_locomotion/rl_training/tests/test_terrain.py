@@ -29,7 +29,7 @@ def test_shapes_and_origins():
     hf, origins = make_heightfield(CFG)
     b = round(CFG["border"] / HS)
     assert hf.shape == (CFG["rows"] * N + 2 * b + 1, len(CFG["cols"]) * N + 2 * b + 1)
-    assert origins.shape == (10, 7, 3)
+    assert origins.shape == (10, 8, 3)
     assert origins[3, 5, :2] == pytest.approx([CFG["border"] + 3.5 * CFG["tile"], CFG["border"] + 5.5 * CFG["tile"]])
     i, j = centers(origins).T
     assert np.array_equal(hf[i, j], origins[..., 2].ravel())  # z = 중앙 플랫폼 높이
@@ -67,3 +67,13 @@ def test_pipes_peak_on_vertices():
     assert z.max() == pytest.approx(0.10)
     assert (z == z[:, :1]).all()  # 축 y 능선
     assert tile("pipes", 0.4).max() == pytest.approx(0.04)  # 지름 < hs여도 능선이 사라지지 않는다
+
+
+def test_rough_v2_terrain_cfg():
+    assert CFG["cols"] == ["flat", "rough", "slope_up", "slope_down", "stairs_up", "stairs_down", "pipes", "pipes"]  # 파이프 1/4
+    assert CFG["max_init_level"] == 6
+    hf, origins = make_heightfield(CFG)
+    assert origins.shape[1] == 8
+    j0, j1 = (round(origins[0, k, 1] / HS) - C for k in (6, 7))  # 두 pipes 열 타일의 y 시작 꼭짓점
+    a, b = hf[:, j0:j0 + N + 1], hf[:, j1:j1 + N + 1]
+    assert a.any() and np.array_equal(a, b)  # 모든 행에서 같은 형상(pipes는 난수를 쓰지 않는다)
