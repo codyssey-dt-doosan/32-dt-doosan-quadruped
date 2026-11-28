@@ -111,10 +111,7 @@ public class UnityRosBridge : MonoBehaviour
                     if(rosQuat.x==0&&rosQuat.y==0&&rosQuat.z==0&&rosQuat.w==0)rosQuat=Quaternion.identity;
                     var worldPos=originUnity+originRotation*RosCoordinates.ToUnity(deltaRos);
                     var worldRot=originRotation*RosCoordinates.ToUnity(rosQuat);
-                    var tw=odomEnv.msg.twist?.twist;
-                    float spd=tw?.linear!=null?Mathf.Sqrt((float)(tw.linear.x*tw.linear.x+tw.linear.y*tw.linear.y)):0f;
-                    if(tw?.angular!=null)spd+=0.35f*Mathf.Abs((float)tw.angular.z);
-                    drive.SetMirrorPose(worldPos,worldRot,spd);
+                    drive.SetMirrorPose(worldPos,worldRot);
                     AcceptedCommands++;
                     continue;
                 }

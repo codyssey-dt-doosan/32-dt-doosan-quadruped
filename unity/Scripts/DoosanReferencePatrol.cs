@@ -26,12 +26,14 @@ public class DoosanReferencePatrol : MonoBehaviour
     float rosLinear, rosAngular;
     Vector3 mirrorPos;
     Quaternion mirrorRot = Quaternion.identity;
-    float mirrorSpeed;
+    [Tooltip("Body speed (m/s) at which spot_move feet do not slip at animator speed 1 — stance-foot FK of the clip gives 0.40.")]
+    public float mirrorClipSpeed = 0.40f;
+    float mirrorScreenSpeed;
     bool hasMirrorPose;
     public void SetRosCommand(float linear, float angular){rosLinear=linear;rosAngular=angular;}
     public void ClearRosCommand(){rosLinear=rosAngular=0;}
-    public void SetMirrorPose(Vector3 pos, Quaternion rot, float speedMag){mirrorPos=pos;mirrorRot=rot;mirrorSpeed=speedMag;hasMirrorPose=true;}
-    public void ClearMirrorPose(){hasMirrorPose=false;mirrorSpeed=0;}
+    public void SetMirrorPose(Vector3 pos, Quaternion rot){mirrorPos=pos;mirrorRot=rot;hasMirrorPose=true;}
+    public void ClearMirrorPose(){hasMirrorPose=false;mirrorScreenSpeed=0;}
     public bool paused;
     public int routeIndex;
     CharacterController body;
@@ -69,10 +71,16 @@ public class DoosanReferencePatrol : MonoBehaviour
                     if(best>float.NegativeInfinity)target.y=best+rideHeight;
                 }
                 float k=1f-Mathf.Exp(-25f*Time.deltaTime);
+                var before=transform.position;float yawBefore=transform.eulerAngles.y;
                 transform.position=Vector3.Lerp(transform.position,target,k);
                 transform.rotation=Quaternion.Slerp(transform.rotation,mirrorRot,k);
+                // Legs follow the on-screen motion, not /odom twist: twist is sim-time speed, the body moves at sim speed × RTF.
+                float dt=Mathf.Max(Time.deltaTime,1e-4f);
+                var moved=transform.position-before;moved.y=0;
+                float screen=moved.magnitude/dt+0.35f*Mathf.Abs(Mathf.DeltaAngle(yawBefore,transform.eulerAngles.y))*Mathf.Deg2Rad/dt;
+                mirrorScreenSpeed=Mathf.Lerp(mirrorScreenSpeed,screen,1f-Mathf.Exp(-5f*dt));  // /odom arrives in bursts at low RTF
             }
-            if(robotAnimator)robotAnimator.speed=mirrorSpeed>0.03f?Mathf.Clamp(mirrorSpeed*2.2f,0.35f,1.8f):0f;
+            if(robotAnimator)robotAnimator.speed=mirrorScreenSpeed>0.02f?Mathf.Min(mirrorScreenSpeed/mirrorClipSpeed,3f):0f;
             return;
         }
         if(body&&!body.enabled)body.enabled=true;
